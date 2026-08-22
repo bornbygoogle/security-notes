@@ -1,11 +1,10 @@
 export default {
   logo: <span style={{ fontWeight: 700 }}>🛡️ Security Notes</span>,
-  // TODO: after you create the GitHub repo, replace YOUR_USERNAME below.
   project: {
-    link: 'https://github.com/YOUR_USERNAME/security-notes'
+    link: 'https://github.com/bornbygoogle/security-notes'
   },
   docsRepositoryBase:
-    'https://github.com/YOUR_USERNAME/security-notes/tree/main',
+    'https://github.com/bornbygoogle/security-notes/tree/main',
   head: (
     <>
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
