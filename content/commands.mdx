@@ -1,4 +1,4 @@
-# Command Reference — Web + OSINT Pentest (PT1 study cheat-sheet)
+# Command Reference — Pentest, OSINT & CTF (PT1 study cheat-sheet)
 
 > A tool-by-tool, flag-by-flag reference distilled from lab work. **No sensitive data** — every
 > target-specific value is a placeholder. Copy a line, swap the placeholders, run it.
@@ -359,6 +359,161 @@ curl http://<attacker-ip>:<port>/file -o file
 5. POST-EXPLOIT read configs, dump DBs, crack/verify hashes, escalate user→admin→root
 6. VERIFY       confirm each finding a 2nd way; separate VERIFIED from ASSUMED; keep dead ends
 ```
+
+---
+
+## 13. Binary / static analysis & CTF file triage
+
+For "here's a file, find the flag" challenges (RE, forensics, game hacking). **Static analysis by
+default** — read the file as *data*; never run an unknown binary outside an isolated VM.
+
+Placeholders: `<file>` = the sample, `<off>` = a byte offset (e.g. `0x5036600`), `<len>` = a length.
+
+### 13.1 First questions (cheap, always run these first)
+
+```bash
+file <file>                 # what kind of file is it?
+ls -l <file>                # size — a huge "code" file is mostly DATA (art/audio/levels)
+sha256sum <file>            # record the fingerprint; prove you analysed exactly this file
+```
+| Tool | Does |
+|------|------|
+| `file` | guesses type from magic bytes (PE/ELF/ZIP/PNG…) |
+| `ls -l` | byte size — a size that dwarfs the expected code hints at bundled assets |
+| `sha256sum` | content hash; note it in your write-up |
+
+### 13.2 The free win — search for a flag before anything clever
+
+```bash
+strings -a <file> | grep -iE "flag|THM\{|CTF\{"     # the 5-second first move on ANY CTF file
+grep -aoE "THM\{[^}]*\}" <file>                       # faster + clean: prints only the flag
+```
+| Part | Meaning | Why |
+|------|---------|-----|
+| `strings` | prints runs of printable text from a binary | menus, paths, messages — and sometimes the flag |
+| `strings -a` | scan the **entire** file, not just "data" sections | flags often sit outside normal sections; **always use `-a`** |
+| `strings -n <N>` | only text ≥ N chars | `-n 25` filters out accidental short noise |
+| `grep -a` | treat a binary as text | else grep just says "Binary file matches" |
+| `grep -o` | print only the matched part, not the whole binary "line" | avoids a screenful of garbage around the hit |
+| `grep -E` | extended regex (`\|`, `{}`, `[]`, `()` work) | `THM\{[^}]*\}` = `THM{`, non-`}` chars, `}` |
+| `grep -i` | case-insensitive | catch `flag`/`FLAG` |
+| `grep -b` | print each match's **byte offset** | tells you *where* in the file it lives |
+
+> `grep -aoE "THM\{[^}]*\}" <file>` is ~35× faster than `strings … | grep …` because it never
+> builds the million-line text haystack — it scans raw bytes. A magic-byte/string match is a
+> **candidate, not a conclusion** — sanity-check it.
+
+### 13.3 Is a slow command stuck? — measure & show progress
+
+```bash
+time ( strings -a <file> | grep "THM{" )   # how long does it REALLY take? (user=cpu, 100%cpu=cpu-bound)
+pv <file> | strings -a | grep "THM{"       # live progress bar reading the file (pv = pipe viewer)
+strings -a <file> | pv -l | grep "THM{"    # -l counts LINES flowing through instead of bytes
+```
+Rescue a job you already started (second terminal — don't kill it):
+```bash
+pgrep -a strings        # find the running process id (PID)
+pv -d <PID>             # -d = watch that PID's open files and how far it has read
+```
+| Flag | Meaning |
+|------|---------|
+| `time ( … )` | wall/CPU time of the whole pipeline; `100% cpu` ⇒ CPU-bound, not disk |
+| `pv <file>` | progress bar + throughput + ETA for data flowing through a pipe |
+| `pv -l` | count lines instead of bytes (no % when total is unknown, but proves it's alive) |
+| `pv -d <PID>` | attach to an already-running process and watch its read progress |
+| `grep --line-buffered` | flush each match immediately (changes *when* you see hits, not speed) |
+
+### 13.4 Look at the structure (executables)
+
+```bash
+objdump -h <file>          # -h = section headers ("table of contents": .text/.data/.rdata/…)
+```
+- Standard sections: `.text` (code), `.data`/`.rdata` (constants). **Non-standard section names are
+  where you look first** (e.g. a `pck` section ⇒ a Godot game archive).
+
+### 13.5 Hexdump & numbers
+
+```bash
+xxd <file> | less                 # raw bytes as hex + ASCII
+xxd -s <off> -l <len> <file>      # -s = start at offset, -l = show <len> bytes
+xxd -s -12 <file>                 # -s -12 = start 12 bytes BEFORE the end (read a trailer)
+python3 -c "print(0x5036600)"     # hex -> decimal
+python3 -c "print(hex(93001116))" # decimal -> hex
+python3 -c "print(int.from_bytes(bytes.fromhex('14008800'),'little'))"  # little-endian bytes -> int
+```
+> **Little-endian:** Intel stores multi-byte numbers least-significant-byte-first. Bytes `14 00 88 00`
+> mean `0x00880014`, **not** `0x14008800`. Reverse the byte pairs, then read normally.
+
+### 13.6 Fingerprint the engine / toolchain (turn RE into "read a spec")
+
+Identify what built it — its file formats are then documented. Three angles; agree across ≥2.
+
+**A — let the file talk (know nothing yet): read its real human text**
+```bash
+# real sentences / error messages (filters out machine code that looks like letters):
+strings -a -n 25 <file> | grep -E "^[A-Za-z][A-Za-z0-9 ,.'()-]+$" | sort -u | head
+# the bill of materials — copyright banners share a shape: YEAR-YEAR|present, Names
+strings -a -n 10 <file> | grep -iE "[0-9]{4}(-present|-[0-9]{4}), " | sort -u
+```
+> Also flags outdated/vulnerable bundled libraries (zlib, libpng, FreeType…). Don't trust raw
+> frequency (`sort|uniq -c|sort -rn`) on a binary — machine code counts as fake "words".
+
+**B — test a signature checklist (you have a suspicion)**
+```bash
+for m in GDPC godot UnityPlayer MonoBleedingEdge PyInstaller GameMaker UPX!; do
+  echo "$m: $(grep -a -c "$m" <file>)"
+done
+```
+- `for m in A B C; do … done` = loop, each item into `$m`; `$( … )` = paste a command's output.
+- `grep -a -c` = count matching **lines** (not occurrences). Real occurrence count:
+  `grep -a -o "<m>" <file> | wc -l`. For fingerprinting, **zero vs non-zero is the whole signal.**
+
+| Marker(s) | Built with |
+|-----------|------------|
+| `GDPC`, `godot`, `GDScript` | Godot |
+| `UnityPlayer`, `MonoBleedingEdge`, `Assembly-CSharp` | Unity |
+| `UE4`, `UnrealEngine`, `.pak` | Unreal |
+| `PyInstaller`, `MEIPASS`, `python3xx.dll` | Python (PyInstaller) |
+| `GameMaker`, `YoYo Games` | GameMaker |
+| `Electron`, `app.asar`, `node_modules` | Electron |
+| `UPX!` | not an engine — the file is **packed** (`upx -d <file>` to unpack) |
+
+**C — packing / encryption check**
+```bash
+binwalk -E <file>          # -E = entropy graph. Uniform ~8.0 everywhere ⇒ packed/encrypted
+binwalk <file>             # scan for embedded file signatures (EXPECT false positives — verify!)
+upx -d <file> -o out.bin   # decompress a UPX-packed binary
+```
+> High entropy ≠ encrypted. **Compressed** data (PNG/OGG/zstd) looks just as random. Confirm with a
+> magic-byte signature or by actually parsing the format.
+
+### 13.7 Find files hidden inside a file (by their magic bytes)
+
+When an index/table-of-contents is encrypted, the **contents often aren't** — hunt them directly:
+```bash
+grep -aob 'PK'    <file> | head    # ZIP entries         (-o only match, -b byte offset)
+grep -aob 'RSRC'  <file> | head    # Godot resource
+grep -aob 'GDSC'  <file> | head    # compiled GDScript
+grep -aob '\x89PNG' <file> | head  # PNG image
+```
+Common magic bytes: PNG `89 50 4E 47` · JPG `FF D8 FF` · GIF `GIF8` · ZIP `PK` (`50 4B`) · 7-Zip `37 7A` · ELF `7F 45 4C 46` · PE `MZ`.
+
+> **Security lesson:** a lock on the *index* is not a lock on the *content*. When you meet a control,
+> ask precisely **what** it covers — the gap is usually right beside it.
+
+### 13.8 Reflex order for an unknown CTF binary
+
+```
+1. file <f>                                   what am I holding?
+2. sha256sum <f>                              record it
+3. strings -a <f> | grep -iE "flag|THM\{|CTF\{"   the free win
+4. strings -a <f> | less                      skim: URLs, C:\ paths, product names, errors
+5. objdump -h <f>                             any non-standard section?
+6. FINGERPRINT (2 ways): copyright text  +  signature checklist (GDPC/UnityPlayer/PyInstaller/UPX!/PK)
+7. grep -aob '<magic>' <f>                    hunt embedded files by signature
+8. only now: Ghidra / radare2 (disassembly)
+```
+Steps 1–7 are cheap and solve a surprising share of challenges.
 
 ---
 
