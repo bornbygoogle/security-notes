@@ -1,0 +1,125 @@
+# PT1 Course Glossary
+
+Plain-language definitions for every term and acronym the course uses. When a lesson throws a word you don't know, look here. Grouped by area; skim the one you need.
+
+---
+
+## Setup & general
+
+- **Kali Linux** — the standard Linux distribution for penetration testing; comes with the tools pre-loaded. Your "attack box."
+- **VM (Virtual Machine)** — a full computer running inside your real one, isolated so you can break things safely.
+- **AttackBox** — TryHackMe's in-browser Kali machine; no install or VPN needed.
+- **VPN (Virtual Private Network)** — the encrypted tunnel connecting your Kali box to the TryHackMe target network.
+- **`tun0`** — the network interface the VPN creates. Your attacker IP lives here (`ip addr show tun0`).
+- **Target IP** — the victim machine's address, from the room page. Written `10.10.x.x` in lessons (a placeholder — use the real one).
+- **`ATTACKER_IP`** — *your* IP (your `tun0` address); where targets connect back to you.
+- **Flag (tool)** — an option on a command, starting with `-` or `--`, that changes behaviour.
+- **Flag (CTF)** — a secret string (e.g. `THM{...}`) proving you reached a goal; worth points on the exam.
+- **boot2root** — a challenge box where the goal is to go from nothing to full admin (root/SYSTEM).
+- **CTF (Capture The Flag)** — a hacking challenge format built around finding flags.
+
+## Networking
+
+- **IP address** — a machine's network address (e.g. `10.10.123.45`).
+- **Port** — a numbered "door" for a specific service on a machine (65,535 exist). **Open** = a program is listening.
+- **Service** — a program listening on a port (e.g. Apache on 80, SSH on 22).
+- **TCP** — reliable, connection-based communication (most services).
+- **UDP** — fire-and-forget communication (DNS, SNMP); scanned with nmap `-sU`.
+- **Subnet** — a group of IPs forming one local network.
+- **CIDR** (e.g. `/24`) — notation for a subnet's size; `172.16.5.0/24` ≈ "every IP starting `172.16.5.`".
+- **DNS** — turns names (`target.thm`) into IPs.
+- **`/etc/hosts`** — a local file mapping names to IPs; edit it when DNS won't resolve a lab hostname.
+- **NIC** — network interface card; "dual-homed" = a machine with two NICs (on two networks), the basis for pivoting.
+
+## Access & shells
+
+- **Shell** — command-line access to a machine; running commands *on* the target.
+- **Foothold** — your first shell on a target.
+- **Reverse shell** — the target connects *back* to a listener on your box (the standard method).
+- **Bind shell** — the target listens and you connect in (rarer; firewalls block it).
+- **Web shell** — a small malicious page (e.g. `shell.php?cmd=id`) that runs commands via the browser; a limited foothold you upgrade to a reverse shell.
+- **Listener** — a program (usually `nc -lvnp <port>`) waiting to catch a reverse shell.
+- **root** — the all-powerful admin account on Linux.
+- **SYSTEM** (`NT AUTHORITY\SYSTEM`) — the Windows equivalent of root.
+- **Privilege escalation (privesc)** — going from a limited user to root/SYSTEM.
+- **Pivoting / lateral movement** — using a compromised host to reach machines/networks you couldn't reach directly.
+
+## Web vulnerabilities
+
+- **HTTP** — the protocol browsers and web servers use.
+- **Request / Response** — what the client sends / what the server sends back.
+- **GET / POST / PUT / DELETE** — HTTP methods; GET data is in the URL, POST data in the body.
+- **Parameter** — a named input you send the server (`?id=1`, or a POST field); what you inject payloads into.
+- **Endpoint** — a specific path that accepts requests (`/login`, `/product`).
+- **Status code** — the response's result number: 200 OK, 403 Forbidden (exists but blocked), 404 Not Found, 500 server error.
+- **Cookie / session** — a token proving your logged-in identity; stolen = impersonation.
+- **Server-side / client-side** — code running on the server (PHP/Python, unseen) vs in your browser (JavaScript, visible/editable).
+- **SQL / database** — a database stores data; SQL queries it. **SQLi (SQL Injection)** — breaking out of a query to read/alter the database.
+- **IDOR (Insecure Direct Object Reference)** — changing an id to access data that isn't yours (a Broken Access Control flaw).
+- **XSS (Cross-Site Scripting)** — getting your JavaScript to run in a victim's browser.
+- **DOM** — the browser's in-memory model of a page; "DOM-based XSS" happens purely client-side in it.
+- **SSTI (Server-Side Template Injection)** — input evaluated by a template engine, often leading to RCE.
+- **LFI / RFI (Local/Remote File Inclusion)** — making the server include a local (or remote) file it shouldn't.
+- **Command injection** — making the server run your OS commands.
+- **File upload vuln** — uploading a web shell because the app doesn't validate files properly.
+- **Polyglot** — a file valid as two types at once (e.g. a real image header + PHP code) to bypass upload checks.
+- **RCE (Remote Code Execution)** — running your own commands/code on the target; the highest-impact web outcome.
+- **WAF (Web Application Firewall)** — a filter that blocks malicious-looking requests; sometimes bypassable.
+- **CSP (Content Security Policy)** — a browser control that limits script execution; mitigates XSS.
+
+## Privilege escalation
+
+- **SUID** — a Linux permission bit letting a program run as its owner (often root); abusable via GTFOBins.
+- **GTFOBins** — a reference site listing how to abuse common binaries to escalate.
+- **cron** — Linux scheduled tasks; a writable root cron job is an escalation vector.
+- **linPEAS / winPEAS** — scripts that automatically hunt for privesc vectors on Linux/Windows.
+- **`SeImpersonatePrivilege`** — a Windows token privilege that lets a service account become SYSTEM (via PrintSpoofer/GodPotato).
+- **PrintSpoofer / GodPotato / JuicyPotato** — tools that abuse impersonation privileges for SYSTEM.
+- **`www-data`** — the low-privilege Linux account web servers run as; a common foothold identity.
+
+## Active Directory (Windows domains)
+
+- **AD (Active Directory)** — Microsoft's system for managing users/computers in a Windows network.
+- **Domain** — a group of machines/users under one administration (e.g. `corp.local`).
+- **DC (Domain Controller)** — the server running AD; holds all accounts and password hashes. The crown jewel.
+- **Domain Admin (DA)** — full control of the domain; the AD win condition.
+- **Domain-joined** — a machine that's a member of the domain.
+- **Kerberos** — AD's authentication protocol (port 88), based on tickets.
+- **KDC** — Key Distribution Center; the DC service that issues Kerberos tickets.
+- **TGT (Ticket Granting Ticket)** — your initial Kerberos ticket, proving you authenticated; used to request service tickets.
+- **TGS (Ticket Granting Service ticket)** — a ticket for a specific service; the thing you crack in Kerberoasting.
+- **SPN (Service Principal Name)** — links a service to the account running it; the target of Kerberoasting.
+- **Kerberoasting** — requesting a service's TGS and cracking it offline to get the service account's password.
+- **AS-REP Roasting** — grabbing a crackable blob for accounts with Kerberos pre-authentication disabled (needs only a username).
+- **NTLM hash** — the stored form of a Windows password; shown as `LM:NT` (the first half is the usually-empty LM hash, the second the NT hash you use).
+- **Pass-the-Hash (PtH)** — authenticating with an NTLM hash directly, without cracking it to a password.
+- **LM / NT hash** — two legacy hash halves; modern attacks use the NT part.
+- **ACL (Access Control List)** — the permissions on an AD object; misconfigured ACLs (GenericAll, WriteDACL, etc.) create escalation paths.
+- **BloodHound / SharpHound** — a collector (SharpHound) and graph tool (BloodHound) that map attack paths to Domain Admin.
+- **Neo4j** — the graph database BloodHound stores its data in.
+- **impacket** — a suite of Python tools for AD/network attacks (`impacket-GetUserSPNs`, `-secretsdump`, `-psexec`, etc.).
+- **NetExec (`nxc`)** — the successor to CrackMapExec; a Swiss-army tool for SMB/LDAP/AD enumeration and attacks.
+- **`(Pwn3d!)`** — NetExec's marker meaning the credential is *admin* on that host (vs `[+]` = merely valid).
+- **DCSync** — abusing replication rights to make the DC hand over every account's hash.
+- **`krbtgt`** — the account whose hash signs all Kerberos tickets; stealing it enables Golden Tickets.
+- **Golden Ticket** — a forged TGT (using the `krbtgt` hash) granting arbitrary access; a persistence technique.
+- **gMSA** — group Managed Service Account; a secure service-account type (a remediation for Kerberoasting).
+- **Null session** — connecting to a service with no username/password (`-u '' -p ''`).
+- **Password spraying** — trying one common password against many accounts (avoids lockout better than brute forcing one account).
+
+## Reporting
+
+- **CVSS** — a 0–10 scoring system for vulnerability severity; each finding gets a score + vector string.
+- **Vector string** — the CVSS breakdown (e.g. `CVSS:3.1/AV:N/...`) encoding how the score was reached.
+- **Remediation** — the recommended fix for a finding.
+- **Rules of Engagement (RoE)** — the document defining what you may and may not do in an engagement/exam.
+- **Executive summary** — a high-level overview of an engagement (but on PT1, write it *technical*, not for executives — see `reporting/`).
+- **Scope** — what you're authorised to test.
+
+## Common tools (quick "what is it")
+
+- **nmap** — port/service scanner. **ffuf / gobuster** — web content brute-forcers. **Burp Suite** — intercepting web proxy. **sqlmap** — automated SQL injection. **hydra** — login brute-forcer. **hashcat** — password-hash cracker. **netcat (`nc`)** — general network/listener tool. **searchsploit** — offline exploit-database search. **Metasploit** — exploitation framework (bundles many exploits). **Mimikatz** — Windows credential-dumping tool. **Ligolo-ng / chisel** — pivoting/tunnelling tools. **evil-winrm** — remote Windows shell over WinRM.
+
+---
+
+*Missing a term? It's worth adding — note it and it can be folded in. A good glossary grows as you study.*

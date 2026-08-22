@@ -1,0 +1,143 @@
+# Web Module — Lesson 0: How the Web Works
+
+**Read this before `web/01`.** The web attacks in this module (SQLi, IDOR, XSS, SSTI) all manipulate how a browser and a web server talk. If you don't yet know what a "request," a "parameter," or a "cookie" is, the attacks won't make sense. This lesson gives you exactly those fundamentals — nothing more than the later lessons need.
+
+No web-development background assumed.
+
+---
+
+## 1. Client and server — the two halves
+
+When you use a website, two computers talk:
+
+- The **client** — your browser (Chrome, Firefox). It runs on *your* machine.
+- The **server** — the remote computer hosting the website. It runs the application code and the database.
+
+Your browser sends a **request**; the server sends back a **response** (the page). Every web attack is about crafting requests the server didn't expect.
+
+**Server-side vs client-side** — a distinction you'll need constantly:
+- **Server-side** code runs on the server (languages like PHP, Python, Java). You never see it directly. SQL injection and SSTI abuse server-side code.
+- **Client-side** code runs in your browser (JavaScript). You *can* see and change it. XSS abuses client-side execution.
+
+Because client-side checks run on *your* machine, an attacker can bypass them — which is why "the JavaScript validated it" is never real security.
+
+---
+
+## 2. HTTP requests and responses
+
+The web runs on **HTTP** (HyperText Transfer Protocol). A request has a **method**, a **path**, **headers**, and sometimes a **body**.
+
+A simple request:
+```
+GET /search?q=shoes HTTP/1.1
+Host: example.com
+Cookie: session=abc123
+```
+- `GET` — the **method** (what you want to do; see below).
+- `/search?q=shoes` — the **path** plus a **query string** (`?q=shoes`).
+- `Host`, `Cookie` — **headers** (metadata about the request).
+
+The server's **response**:
+```
+HTTP/1.1 200 OK
+Content-Type: text/html
+
+<html>... the page ...</html>
+```
+- `200` — the **status code** (see Section 5).
+- Then the body — the HTML your browser renders.
+
+You'll inspect and edit these requests with **Burp Suite** (`web/06`). Set Burp up early — the web lessons use it from the start.
+
+---
+
+## 3. Methods — GET vs POST (and friends)
+
+The method says what kind of action the request is:
+
+| Method | Used for | Where the data goes |
+|---|---|---|
+| **GET** | Fetching a page/resource | In the URL (the query string) |
+| **POST** | Submitting data (login, form) | In the request **body** |
+| **PUT** | Updating a resource (often APIs) | In the body |
+| **DELETE** | Removing a resource | — |
+
+Key point: **GET data is visible in the URL; POST data is in the body** (you need Burp to see and edit it easily). A login is usually a POST.
+
+---
+
+## 4. Parameters — the inputs you attack
+
+A **parameter** is a named input you send to the server. This word appears in *every* web lesson — it's the thing you inject payloads into.
+
+In a GET request, parameters are in the query string after `?`:
+```
+/product?id=1&category=shoes
+```
+- Two parameters: `id` (value `1`) and `category` (value `shoes`). `&` separates them.
+
+In a POST request, they're in the body:
+```
+username=admin&password=secret
+```
+- Parameters `username` and `password`.
+
+When a lesson says "inject into the `id` parameter," it means: change the value of `id` to your payload (e.g. `id=1'` for SQLi). An **endpoint** is just a specific path that accepts requests (like `/login` or `/product`) — "the `/product` endpoint" = that URL you send parameters to.
+
+---
+
+## 5. Status codes — what the response tells you
+
+The three-digit code summarises what happened:
+
+| Range | Meaning | Examples you'll care about |
+|---|---|---|
+| **2xx** | Success | `200 OK` |
+| **3xx** | Redirect | `301`/`302` (moved — often to a login) |
+| **4xx** | Your request had a problem | `403 Forbidden` (exists but blocked), `404 Not Found` |
+| **5xx** | The server errored | `500` (often a sign your injection broke something — a good clue!) |
+
+When you fuzz for hidden pages (`ffuf -mc 200,301,403`), you're filtering by status code. `403` is interesting: the page *exists* but you're denied. `500` after a payload often means you hit something.
+
+---
+
+## 6. Cookies and sessions — how the site knows it's you
+
+HTTP forgets you between requests. So after you log in, the server gives your browser a **cookie** — a small token it sends back on every request to prove who you are:
+```
+Cookie: session=abc123
+```
+- The **session cookie** (`session=abc123` here) is your logged-in identity. If an attacker steals it (see XSS, `web/03`), they *become* you without a password.
+- When a lesson's command needs `-b "session=YOUR_COOKIE"` (e.g. the IDOR fuzzing in `web/02`), it wants your session cookie so the request is made *as the logged-in you*. You find it in Burp, or in your browser's dev tools (F12 → Application/Storage → Cookies).
+
+---
+
+## 7. A tiny bit of "what's behind the server"
+
+You don't need to code, but two words recur:
+
+- **PHP** — a common server-side language. `web/01` and `web/03` show PHP snippets like `$_GET['q']` — that's PHP reading the `q` parameter. `$` marks a variable. You don't write PHP; you just need to recognise "this is server code reading my input."
+- **Database / SQL** — most apps store data (users, products) in a **database**, queried with **SQL** (Structured Query Language). A query like `SELECT * FROM users WHERE id=1` asks the database for matching rows. **SQL injection** (`web/01`) works by breaking out of that query. `web/01` teaches the SQL you need as it goes.
+
+---
+
+## 8. Putting it together — the shape of a web attack
+
+1. Browse the app; watch the requests in Burp (client → server).
+2. Spot **parameters** and **endpoints** that take your input.
+3. Send an unexpected value in a parameter (a payload).
+4. Read the **response** (status code, body, errors) to see if the server mishandled it.
+5. Escalate the mishandling into impact (data theft, running code, becoming another user).
+
+That loop is every lesson in this module. Now you have the vocabulary for it.
+
+---
+
+## 9. Carry forward
+
+- **Client** (browser) sends a **request**; **server** sends a **response**. Server-side code you can't see; client-side (JS) you can.
+- A **parameter** is a named input (`?id=1` or a POST body field) — the thing you inject. An **endpoint** is a path that takes requests.
+- **GET** = data in URL, **POST** = data in body. **Status codes**: 200 ok, 403 blocked-but-exists, 500 server error (often a clue).
+- A **session cookie** is your logged-in identity; stealing it = impersonation.
+
+**Next lesson:** `web/06-burp-suite-workflow.md` to set up Burp (do this before the attack lessons), then `web/01-sql-injection.md`.

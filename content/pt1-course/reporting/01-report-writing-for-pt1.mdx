@@ -1,0 +1,135 @@
+# Reporting Module — Lesson 1: Writing the Report That Passes PT1
+
+**Methodology phase:** Reporting — the final phase, and the one that decides pass/fail.
+**Why this module exists and why you start it in Week 1, not Week 16:** on PT1 the report *is* the exam. You can own every box and still fail if the write-up is thin. The good news: the grading is mechanical enough that you can train for it deliberately. This lesson tells you exactly what the grader wants and how to give it that, every single lab, from day one.
+
+---
+
+## 1. How PT1 grading actually works (sourced facts)
+
+This is not a human reading your prose. It's an **AI grader on an unproctored exam**, and it behaves in specific, exploitable-in-a-good-way ways.
+
+**The point structure (out of 1000, need 750 to pass):**
+
+| Section | Points | Share |
+|---|---|---|
+| Web Application Pentest | 400 | 40% |
+| Network Pentest | 360 | 36% |
+| Active Directory Pentest | 240 | 24% |
+| **Total** | **1000** | **need 750** |
+
+Within a section, the **summary is ~20% of that section's grade**, and the rest is the per-finding write-ups.
+
+**Per-item scoring (from candidate reports):**
+- **Network:** a flag ≈ **36 points**. Two machines, each with a user and a root flag.
+- **Active Directory:** a flag ≈ **74 points**. Higher value per flag, fewer of them.
+- **Web:** each vulnerability ≈ **95 points**, broken down across five things the grader looks for:
+  1. the **flag** for that vuln,
+  2. the **categorization** (from a predefined dropdown),
+  3. the **CVSS score**,
+  4. the **vulnerability write-up** (including the recon/how-you-found-it steps),
+  5. the **remediation**.
+
+**What this means strategically:** web is only 40% of the score but has the highest per-item value *and* the most sub-fields to fill, so it's where careful reporting earns the most — and where thin reporting bleeds the most. Miss the flag for a web vuln and you lose the flag allocation even if your write-up is perfect.
+
+---
+
+## 2. The five rules the grader rewards
+
+These come straight from candidates who passed (and some who lost points). Follow them mechanically.
+
+1. **Always tie a flag to the finding.** A valid, well-written vulnerability with *no flag* loses all flag points. Reviewers report that missing one flag can cost **more than half a section**. The flag is the anchor — find it, paste it, then write around it.
+2. **Use the predefined vulnerability categories.** The reporting app has dropdowns. **Custom categories don't score.** Pick the closest predefined one (e.g. "SQL Injection", "Broken Access Control", "Cross-Site Scripting") even if your instinct is a fancier label.
+3. **Write technical, keyword-dense content — not management prose.** The AI looks for *keywords* and rewards detail. One reviewer wrote a polished, business-friendly executive summary "in language management would understand" and the grader **penalised it**. Counter-intuitive but real: even the summary should be technical and keyword-loaded. Name the vulnerability, the tool, the parameter, the CVE if any, the impact term.
+4. **Paste real evidence.** Include actual terminal output and the raw HTTP request/response from Burp. Screenshots aren't needed (and weren't even possible in the exam). "The more you paste, the better" is a crude but accurate summary of how the grader treats evidence.
+5. **Fill every field, every time.** Flag, category, CVSS, write-up, remediation. An empty field is guaranteed zero for that allocation. A mediocre-but-present entry beats a blank.
+
+> **The honest caveat:** the grading is known to be inconsistent — one candidate wrote a detailed AD analysis and scored **2 points** on it. You can't fully control the AI. What you *can* control is never leaving points on the table through blanks, custom categories, missing flags, or management-speak. Do the controllable things perfectly and the variance stops mattering.
+
+---
+
+## 3. Anatomy of a PT1 finding
+
+Every finding — web, network, or AD — should contain these blocks. This maps directly onto the in-environment reporting app's fields, so practising it now means exam day is just data entry.
+
+```
+TITLE:        <Vuln name> on <host/endpoint>            e.g. SQL Injection in /product?id
+CATEGORY:     <predefined dropdown value>               e.g. SQL Injection
+FLAG:         <the exact flag string>                   THM{...}
+CVSS:         <score> (<vector string>)                 9.8 (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H)
+AFFECTED:     <URL / IP / hostname / parameter>
+
+DESCRIPTION / WRITE-UP:
+  - Initial reconnaissance: how you found it (the nmap line, the Burp request, the fuzzing hit).
+  - The vulnerability: what it is and why it exists here.
+  - Exploitation: step-by-step, with the exact commands/requests.
+  - Evidence: pasted terminal output + HTTP request/response proving it.
+
+IMPACT:
+  What an attacker gains (data read, RCE, account takeover, Domain Admin).
+
+REMEDIATION:
+  The concrete fix (parameterised queries, output encoding, patch, config change).
+```
+
+Note "**initial reconnaissance**" explicitly — one reviewer found the grader expected the *how-you-found-it* steps inside the write-up, not just the exploit. Include recon in every finding.
+
+---
+
+## 4. CVSS scoring without overthinking it
+
+You must give each vulnerability a CVSS score. You don't need to be a CVSS scholar — you need a defensible number and vector. Use the quick reference in **[`cvss-quick-reference.md`](/pt1-course/reporting/cvss-quick-reference)**; the short version:
+
+- **Critical (9.0–10.0):** unauthenticated RCE, SQLi dumping the DB, auth bypass to admin, SSTI→RCE.
+- **High (7.0–8.9):** stored XSS, most IDOR with write access, authenticated RCE, LFI reading sensitive files.
+- **Medium (4.0–6.9):** reflected XSS, read-only IDOR, information disclosure, weak config.
+- **Low (0.1–3.9):** missing security headers, verbose errors, self-XSS.
+
+Generate the exact vector with the official calculator (`https://www.first.org/cvss/calculator/3.1`) and paste both the number and the vector string. The vector string itself is keyword-dense — exactly what the grader likes.
+
+---
+
+## 5. The executive summary — technical, not corporate
+
+Each section wants a summary worth ~20% of that section's grade. Despite the name, **do not write it for executives on this exam.** Write a technical synopsis:
+
+- Name each vulnerability found and its severity.
+- State the overall risk in concrete terms ("full database compromise", "remote code execution as SYSTEM", "path to Domain Admin via Kerberoasting").
+- Reference the tools and techniques used.
+- Keep it keyword-rich. The grader is scanning for the same technical terms that appear in your findings.
+
+A good exam summary reads like a dense abstract of your findings, not a boardroom briefing. (In a *real* engagement you'd write the opposite — a plain-English business summary. Learn both; use the technical one here.)
+
+---
+
+## 6. Time management across 48 hours
+
+The report is why people run out of time. Bake it into the engagement, don't bolt it on at hour 40.
+
+- **Write as you go.** The moment you get a flag, paste it and the evidence into your notes under the finding template. Cold documentation at the end loses details and hours.
+- **Suggested split:** the network and AD sections are fast (reviewers cleared them in 2–3 hours of *exploitation*). Bank those points and their write-ups early — they're the most reliable 600 of your 750. Then pour the remaining time into web, which is the deepest section.
+- **Directory discipline:** one folder per phase (`network/`, `ad/`, `web/`), tool output and Burp saves dropped in as you work. Your report is then assembled from files, not memory.
+- **A flag without a write-up is unfinished.** Budget documentation time per finding, not just exploitation time.
+
+---
+
+## 7. Exercises (do these from Week 1, on every room you complete)
+
+**Exercise 1 — retrofit a finding.** Take any room you've *already completed* and write it up using the Section 3 template, filling every field. In Week 1 that's a foundational box like *Vulnversity* or *Basic Pentesting* (from `network/01`); once you reach the Web module, redo it for the SQLi lab (`web/01`). Use whatever you've actually done — don't wait.
+**Exercise 2 — categorise correctly.** For five different vulns you've exploited, assign the *predefined* category you'd pick from a dropdown. Where you'd have invented a custom label, find the closest standard one instead.
+**Exercise 3 — CVSS a finding.** Score three of your findings with the FIRST calculator; paste the number and vector. Justify each in one sentence.
+**Exercise 4 — technical summary.** Write a section summary for one completed room in the technical, keyword-dense style of Section 5. Then rewrite it in management style and note the difference — so you never confuse the two on exam day.
+**Exercise 5 — the habit.** For the rest of this course, write a full finding after *every* lab. That's ~20 reps before the exam. Reporting becomes reflex.
+
+---
+
+## 8. Carry forward
+
+- The report is the exam. Flags anchor findings; blanks and custom categories throw away guaranteed points.
+- Write technical and dense — the AI grader rewards keywords and evidence, and penalises corporate prose, even in the summary.
+- Fill all five fields per finding: flag, category, CVSS, write-up (with recon), remediation.
+- Start now. Every lab in this course ends with a written finding — that's the whole point of the "report it" exercise in every lesson.
+
+**Companion files:** [`report-template.md`](/pt1-course/reporting/report-template) (copy it per engagement) · [`cvss-quick-reference.md`](/pt1-course/reporting/cvss-quick-reference) (scoring cheat sheet).
+
+**Sources:** [Technomancer PT1 review](https://jacnow.net/technomancer/tryhackme-pt1-certification-review/) · [Motasem PT1 review](https://motasem-notes.net/tryhackme-pt1-certification-review/) · [Myinside PT1 review](https://medium.com/@teammyinside/tryhackme-pt1-exam-review-is-it-really-for-juniors-6a9540ccf3d8) · [happycamper84 PT1 review](https://happycamper84.medium.com/tryhackme-junior-penetration-tester-pt1-ad-exam-review-b9b5fa225f44).

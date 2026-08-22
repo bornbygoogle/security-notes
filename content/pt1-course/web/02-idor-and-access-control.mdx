@@ -1,0 +1,124 @@
+# Web Module — Lesson 2: IDOR & Broken Access Control
+
+**Methodology phase:** Exploitation, but it starts during Enumeration — you spot IDOR by *watching identifiers* while you browse.
+**Why it matters for PT1:** reviewers flag IDOR as a staple of the web section, and it's #1 on the OWASP Top 10 (Broken Access Control). It needs no special tooling — just attention — which is exactly why it's easy to walk past.
+
+---
+
+## 1. The concept
+
+**IDOR (Insecure Direct Object Reference)** is what happens when an app uses an identifier you control to fetch an object, and *forgets to check whether that object is yours*.
+
+```
+GET /account?id=1337    -> your invoice
+GET /account?id=1338    -> someone else's invoice
+```
+
+The server trusted the `id` in the request instead of tying the object to your session. That's the whole bug. It's a subclass of **Broken Access Control**: the app knows *who you are* (authentication works) but fails to enforce *what you're allowed to touch* (authorisation is missing).
+
+Two flavours you'll meet:
+
+- **Horizontal** — you access another *user's* data at your own privilege level (their invoice, their messages).
+- **Vertical** — you reach *higher-privilege* functions you shouldn't (a normal user hitting `/admin/deleteUser`). Often called privilege escalation within the app.
+
+---
+
+## 2. Where the identifiers hide
+
+IDOR isn't only `?id=`. Train your eye to spot every place the app references an object:
+
+| Location | Example |
+|---|---|
+| URL query string | `/profile?user=1002` |
+| URL path | `/api/orders/5581` |
+| POST body | `{"account_id": 44}` |
+| Cookies | `Cookie: role=user; uid=12` |
+| Hidden form fields | `<input type=hidden name=doc value=91>` |
+| API JSON | `PUT /api/users/91` with your data |
+
+**The tell:** any value that looks like a database row — sequential integers, UUIDs, short hashes, filenames like `invoice_004.pdf`. If you can change it and get *someone else's* thing back, that's the finding.
+
+---
+
+## 3. Finding it — the method
+
+1. **Log in as a low-priv user** and use the app normally. Note every request that references an object by id (Burp's HTTP history, Lesson 6, makes this trivial).
+2. **Change the identifier by one** (`id=1001` → `id=1002`). Different data returned = horizontal IDOR.
+3. **Register/obtain a second account** if you can. Grab an object id belonging to account A, then request it while logged in as account B. If B sees A's data, it's confirmed — and you have clean before/after evidence for the report.
+4. **Try privileged endpoints directly.** Guess or enumerate admin paths (`/admin`, `/admin/users`, `/api/v1/admin/...`) — Lesson on forced browsing overlaps here. Reaching them as a normal user is vertical access control failure.
+5. **Watch for "obscured" ids.** If the id is base64 (`MTAwMg==` decodes to `1002`) or a predictable hash, decode/predict it and keep going. Obscurity is not access control.
+
+> **Rabbit-hole warning:** truly random UUIDs you can't obtain another way are usually *not* exploitable IDOR — you can't guess `f47ac10b-58cc-4372-...`. Don't burn an hour brute-forcing UUID space on the exam. IDOR is exploitable when the id is *predictable* or *obtainable*.
+
+---
+
+## 4. Worked example — horizontal IDOR to another user's data
+
+Room to do this live: **[TryHackMe — IDOR](https://tryhackme.com/room/idor)**.
+
+**Step 1 — normal use.** Log in as your test user, open your profile:
+```
+GET /profile?user_id=1305   -> your name, email
+```
+
+**Step 2 — nudge the identifier.**
+```
+GET /profile?user_id=1304   -> a different person's name and email
+```
+Confirmed. But one data point is weak evidence.
+
+**Step 3 — quantify the impact.** The exam and the report both reward showing *scope*. Enumerate a range with `ffuf` to prove it's every user, not a fluke:
+```bash
+ffuf -w <(seq 1300 1310) -u "http://10.10.x.x/profile?user_id=FUZZ" \
+     -b "session=YOUR_COOKIE" -mc 200 -fs 0
+```
+- `-w <(seq 1300 1310)` — wordlist is the numbers 1300–1310 (process substitution feeds `seq` as a file).
+- `-u ... FUZZ` — `FUZZ` marks where each wordlist entry is injected.
+- `-b "session=..."` — send your authenticated cookie so you're testing as a logged-in user.
+- `-mc 200` — match only HTTP 200 responses.
+- `-fs 0` — filter out zero-length (empty) responses so only real profiles show.
+
+Eleven users' data returned. Now you can write "all user profiles are enumerable by an authenticated user" with evidence.
+
+> **Dead end kept in:** my first `ffuf` run showed 200s for *every* id including nonexistent ones, because the app returned a 200 "not found" page. I fixed it by adding `-fs` to filter the known error-page size. Lesson: baseline the *size* of a valid vs invalid response before trusting the match count.
+
+**Step 4 — escalate if you can.** Change `user_id` to `1` — often the first/admin account. If you can read or *edit* it (try the same id on a `POST /profile/update`), you've turned horizontal IDOR into account takeover.
+
+---
+
+## 5. Exercises
+
+**Exercise 1 — horizontal read.** On the IDOR room, access another user's account page and record the exact before/after requests.
+**Exercise 2 — write, not just read.** Find an endpoint that *updates* an object by id. Can you modify an object that isn't yours? (Read-IDOR is medium severity; write-IDOR is often critical.)
+**Exercise 3 — vertical.** Find a function a normal user shouldn't reach. Access it directly by URL. What access control was missing?
+**Exercise 4 — report it.** Write the finding for Exercise 2, including why write-access raises the severity above a read.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** Decrement/alter the `user_id` (or equivalent) parameter while keeping your own session cookie. The server returns another user's data because it never checks that the requested object belongs to your session.
+
+**Exercise 2.** Look for `POST`/`PUT` requests carrying an object id (often a hidden field or JSON body). Swap the id to one you don't own and change a field. If the update succeeds, the app authorised the write purely on the id you supplied. Evidence = the request + the changed object viewed from the victim account.
+
+**Exercise 3.** Typical answer: an admin-only page (`/admin`, `/settings/all-users`) returns 200 to a standard user. The missing control is a server-side role check on the endpoint — the app hid the *link* in the UI but never enforced the *permission* on the route.
+
+**Exercise 4 — model finding.**
+> **Title:** Broken access control — arbitrary account modification via IDOR (Critical).
+> **Endpoint:** `POST /profile/update`, `user_id` parameter.
+> **Reproduction:** Authenticated as user 1305, send the update request with `user_id=1` and a modified email. Server accepts the change to the admin account.
+> **Impact:** Any authenticated user can modify (and via password/email reset, take over) any account, including admin. Read-only IDOR leaks data; write access enables full account takeover — hence Critical.
+> **Remediation:** Enforce server-side authorisation on every object access — verify the requested object belongs to (or is permitted for) the authenticated session. Never rely on the client-supplied id alone.
+
+</details>
+
+---
+
+## 6. Carry forward
+
+- Access control is checked **per request, on the server** — the UI hiding a button proves nothing. This idea underpins the whole OWASP #1 category.
+- Write-IDOR &gt; read-IDOR in severity. Always test whether you can *change*, not just *view*.
+- Evidence is a before/after pair from two accounts. Bank that pattern for the report.
+
+**Next lesson:** `web/03-xss.md` — getting the victim's browser to run your JavaScript.

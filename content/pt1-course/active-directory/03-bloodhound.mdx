@@ -1,0 +1,161 @@
+# Active Directory Module — Lesson 3: BloodHound & Attack Paths
+
+**Methodology phase:** Enumeration → planning the escalation. BloodHound turns the messy web of AD permissions into a graph and shows you the *shortest path* from where you are to Domain Admin.
+**Why it matters for PT1:** reviewers named **SharpHound/BloodHound**. AD escalation is rarely a single exploit — it's a *chain* of small permissions ("user A can reset user B's password, B is in a group that can admin the DC"). No human spots those by eye. BloodHound does it in one query.
+
+---
+
+## 1. How BloodHound works
+
+Two parts:
+
+1. **A collector (SharpHound)** runs against the domain and gathers everything: users, groups, sessions, ACLs, group memberships, admin rights, and the relationships between them.
+2. **BloodHound (the GUI)** ingests that data into a graph database (Neo4j) and lets you ask questions like *"show me every path from the accounts I control to Domain Admins."*
+
+You collect, you import, you query. The graph does the reasoning.
+
+---
+
+## 2. Collecting the data
+
+**From Kali, remotely (no need to run anything on a Windows host) — `bloodhound-python`:**
+```bash
+bloodhound-python -u jsmith -p 'Password1' -d corp.local -ns 10.10.x.x -c all --zip
+```
+- `-u/-p/-d` — your credential and domain.
+- `-ns 10.10.x.x` — the nameserver = the DC (AD is DNS-driven; point at the DC).
+- `-c all` — every collection method (this is the `CollectionMethod`; `all` gathers ACLs, sessions, group memberships, etc.).
+- `--zip` — bundle the JSON output into a zip ready for import.
+
+**From a Windows foothold — SharpHound** (the `.exe` or `.ps1`):
+```powershell
+.\SharpHound.exe -c All --zipfilename loot.zip
+# or the PowerShell version:
+Import-Module .\SharpHound.ps1; Invoke-BloodHound -CollectionMethod All
+```
+- Same idea, run from inside the domain. Use this when you have a shell but no direct network path for `bloodhound-python`.
+
+> **Over a pivot:** if you reached the subnet via Ligolo (Network Lesson 5), `bloodhound-python` works straight through the tunnel once your route is set — one of the reasons route-based pivoting is so convenient.
+
+---
+
+## 3. Installing and importing (the step that trips beginners)
+
+BloodHound comes in two flavours — and the setup differs, which is why online guides contradict each other. Know which you're using:
+
+- **BloodHound CE (Community Edition)** — the current version, run with **Docker**. It starts its own Neo4j inside containers; you do **not** run `neo4j` yourself.
+- **Legacy BloodHound** — the older Electron app you launch manually against a separately-started Neo4j (`sudo neo4j start`). Only relevant if you specifically install the old version.
+
+**Use BloodHound CE. Setup on Kali:**
+```bash
+# 1. install Docker if needed
+sudo apt update && sudo apt install -y docker.io docker-compose
+# 2. get the CE docker-compose file and bring it up
+curl -L https://raw.githubusercontent.com/SpecterOps/BloodHound/main/examples/docker-compose/docker-compose.yml -o bh-compose.yml
+sudo docker-compose -f bh-compose.yml up
+```
+- On first start, CE prints a **randomly generated admin password** in the terminal log — copy it. Then open `http://localhost:8080` in a browser, log in as `admin` with that password, and set a new one when prompted.
+- **Import your data:** in the CE web UI, go to the upload area (Administration → File Ingest, or the upload button) and select the `.zip` from Section 2. Wait for it to finish processing.
+
+> **The two most common beginner snags here:** (1) running `sudo neo4j start` for CE — you don't; Docker handles Neo4j. (2) Missing the auto-generated admin password in the startup log — scroll back and find the line, or re-create the containers to get a fresh one. If you're on the legacy app instead, *then* `sudo neo4j start` (default creds `neo4j:neo4j`, forced change on first login) and use the desktop app's upload button.
+
+Once loaded:
+
+1. **Mark what you own.** Find each account/computer you've compromised, right-click → **Mark as Owned**. This is what makes the "from owned" queries meaningful.
+2. **Mark your target.** Usually the **Domain Admins** group (or a specific high-value host).
+3. **Run the pre-built queries** (Analysis tab):
+   - *"Find Shortest Paths to Domain Admins"* — the headline query.
+   - *"Shortest Paths from Owned Principals"* — the path *you* can actually walk.
+   - *"Find Principals with DCSync Rights"* — direct routes to dumping every hash (Lesson 5).
+   - *"Kerberoastable accounts"* / *"AS-REP roastable"* — cross-reference with Lesson 2.
+
+The graph draws nodes (users, groups, computers) connected by **edges** — each edge is a permission you can abuse.
+
+---
+
+## 4. Reading the edges — what each abuse means
+
+The edge label tells you the attack. The common ones on PT1-level domains:
+
+| Edge | Meaning | How you abuse it |
+|---|---|---|
+| `MemberOf` | Group membership | Inherited rights of the group |
+| `AdminTo` | Local admin on a computer | Dump creds / get a shell there (Lesson 4) |
+| `GenericAll` / `GenericWrite` | Full/write control over an object | Reset its password, or set an SPN & Kerberoast it |
+| `ForceChangePassword` | Can reset a user's password | Reset it, log in as them |
+| `AddMember` | Can add members to a group | Add yourself to a privileged group |
+| `WriteDACL` / `Owns` | Can modify the object's permissions | Grant yourself GenericAll, then abuse it |
+| `DCSync` (`GetChanges`/`GetChangesAll`) | Can replicate directory secrets | Dump every hash including `krbtgt`/Administrator (Lesson 5) |
+
+**The exam-realistic pattern:** you own `jsmith` → BloodHound shows `jsmith` has `GenericAll` over `svc-backup` → reset `svc-backup`'s password → `svc-backup` is `AdminTo` the DC → dump the domain. Each hop is one abusable edge.
+
+**Right-click any edge → Help** in BloodHound gives you the exact commands (PowerView/impacket) to abuse it. Use it — it's a built-in cheat sheet.
+
+---
+
+## 5. Abusing a common edge — `ForceChangePassword` / `GenericAll` over a user
+
+If BloodHound shows you can reset another user's password:
+```bash
+# with impacket, from Kali
+net rpc password "svc-backup" "NewPass123!" -U "corp.local/jsmith%Password1" -S dc01.corp.local
+# or via bloodyAD / PowerView on a Windows host:
+Set-DomainUserPassword -Identity svc-backup -AccountPassword (ConvertTo-SecureString 'NewPass123!' -AsPlainText -Force)
+```
+Then authenticate as the now-controlled account and continue the chain. **PowerView** (reviewers named it) is the PowerShell toolkit for these ACL abuses on-host.
+
+---
+
+## 6. Worked example — BloodHound finds the two-hop path
+
+Room: **[TryHackMe — Attacktive Directory](https://tryhackme.com/room/attacktivedirectory)** / *Post-Exploitation Basics*.
+
+1. **Collect:** `bloodhound-python -u svc-sql -p 'MSSQLpassw0rd!' -d corp.local -ns dc01 -c all --zip` (using the account you Kerberoasted in Lesson 2).
+2. **Import**, mark `svc-sql` as owned, mark `Domain Admins` as the target.
+3. **Query "Shortest Paths from Owned Principals":** the graph shows
+   `svc-sql --GenericAll--> backupadmin --MemberOf--> Domain Admins`.
+4. **Abuse the edge:** reset `backupadmin`'s password via `net rpc password`.
+5. **Log in as `backupadmin`** — it's in Domain Admins. Path complete; Lesson 5 turns this into full domain compromise and the flags.
+
+> **Dead end kept in:** I ran the "Shortest Paths to Domain Admins" query and got an overwhelming spaghetti graph with no obvious route. Switching to **"Shortest Paths from Owned Principals"** (after marking my accounts owned) collapsed it to the one two-hop path I could actually use. Lesson: mark owned nodes first and query *from* them — the generic query shows every theoretical path, not the one you can walk.
+
+---
+
+## 7. Exercises
+
+**Exercise 1 — collect & import.** Gather domain data with `bloodhound-python` (or SharpHound) and import it. How many users/computers did it find?
+**Exercise 2 — find the path.** Mark your owned account(s) and Domain Admins, run "Shortest Paths from Owned Principals." What edges make up the path?
+**Exercise 3 — abuse an edge.** Take one edge (GenericAll/ForceChangePassword) and abuse it to control the next account. Use BloodHound's right-click → Help for the command.
+**Exercise 4 — report it.** Write the finding for the attack path: the chain of edges, why each is a misconfiguration, and the remediation.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** `bloodhound-python -u user -p pass -d corp.local -ns DC -c all --zip`, then drag the zip into BloodHound. The upload summary shows counts of users, groups, computers, sessions — sanity-check they're non-zero (zero usually means wrong `-ns` or clock/DNS issues from Lesson 1).
+
+**Exercise 2.** After marking owned + target, "Shortest Paths from Owned Principals" draws the walkable route. Typical: `OwnedUser -GenericAll-> Target Or Group -MemberOf-> Domain Admins`. Each edge is one abuse step.
+
+**Exercise 3.** e.g. `GenericAll` over a user → `net rpc password "victim" "NewPass!" -U "corp.local/you%pass" -S DC` (or PowerView's `Set-DomainUserPassword`). Then `nxc smb DC -u victim -p 'NewPass!'` to confirm control. BloodHound's edge Help gives the exact syntax.
+
+**Exercise 4 — model finding.**
+> **Title:** Domain privilege escalation via abusable ACL chain (Critical).
+> **Category (predefined):** Broken Access Control / Privilege Escalation.
+> **Affected:** corp.local — `svc-sql` → `backupadmin` → Domain Admins.
+> **Initial reconnaissance:** BloodHound (SharpHound `-c all`) mapped a path from the owned `svc-sql` account: `GenericAll` over `backupadmin`, which is a member of Domain Admins.
+> **Exploitation:** Abused `GenericAll` to reset `backupadmin`'s password (`net rpc password`), then authenticated as a Domain Admin.
+> **Impact:** A cracked service account escalates to full domain control through misconfigured object permissions.
+> **Remediation:** Review and remove excessive ACLs (GenericAll/WriteDACL) on privileged accounts; apply AD tiering so service accounts cannot control admin accounts; audit with BloodHound regularly.
+
+</details>
+
+---
+
+## 8. Carry forward
+
+- Collect (`bloodhound-python`/SharpHound `-c all`) → mark owned + target → query **from owned** → walk the edges.
+- Each edge is a specific abuse; right-click → Help gives the command. GenericAll/ForceChangePassword/AddMember/DCSync are the ones you'll meet.
+- BloodHound plans the chain; the next lesson executes the lateral movement and credential access that carry you along it.
+
+**Next lesson:** `active-directory/04-lateral-movement-and-credential-access.md` — pass-the-hash, dumping credentials, and moving between hosts along the path BloodHound found.

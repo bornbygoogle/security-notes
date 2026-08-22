@@ -1,0 +1,95 @@
+# PT1 Prep Course — TryHackMe Junior Penetration Tester
+
+A self-paced course to take you from where you are now to a pass on TryHackMe's **PT1 (Junior Penetration Tester)** exam by **end of 2026**. Teaching-oriented, exam-realistic, hands-on. Every command is explained, every flag has a reason, and the wrong turns are kept in on purpose — a clean walkthrough that hides three bad guesses teaches nothing.
+
+> **New to security? Start here, in this order:** (1) **Module 0** in [`labs/`](/pt1-course/labs) — sets up your attack box, connects you to TryHackMe, and teaches the Linux, networking, and "what's a shell" basics everything else assumes. (2) [`web/00-how-the-web-works.md`](/pt1-course/web/00-how-the-web-works) — HTTP, parameters, cookies. (3) Keep [`glossary.md`](/pt1-course/glossary) open in a tab — every acronym is defined there. The attack modules assume you've done Module 0; don't skip it, or the very first command won't work.
+
+---
+
+## What the exam actually is
+
+I built this course around the real exam, not a guess at it. Sourced from the official cert page and two first-hand exam reviews (see Sources at the bottom).
+
+| Fact | Detail |
+|---|---|
+| Format | 100% hands-on. You get an `.ovpn` file, use your own attack VM (Kali), no proctor. |
+| Duration | **48 hours** of exam time. |
+| Scoring | **1000 points total** — Web **400** (40%), Network **360** (36%), AD **240** (24%). Need **750** to pass. |
+| Deliverable | A professional **penetration test report**, submitted through an **in-environment reporting app** (dropdown categories + text fields) and graded by **AI**. No report = no pass, even with the flags. |
+| Grading quirk | The AI grader rewards **technical, keyword-dense** write-ups and pasted evidence; it *penalises* management-style prose. You must use the **predefined vulnerability categories** — custom ones don't score. A valid vuln reported without its **flag** loses the flag points. |
+| Retake | One free retake included. |
+| Cost / validity | ~$297, includes a 3-month Premium sub; cert expires after 3 years. |
+| Prereqs | None formally. In practice: comfort with Linux, networking basics, and a scripting language helps a lot. |
+
+### The three domains — score weight vs. real difficulty
+
+The *grading* weight and the *difficulty* don't line up, and that gap is the whole strategy.
+
+1. **Web Application Security — 400 pts (40%), and the hardest.** Multiple reviewers, including working AppSec pros, call it *not* entry-level and the section where the exam is won or lost. It has the highest per-item value (~95 pts per vuln, scored across flag + category + CVSS + write-up + remediation) and the most ways to bleed points. Structure: ~4 flags with a provided list of candidate vulnerabilities. IDOR, SQLi, XSS, auth flaws, file upload, SSTI, and the rabbit holes that come with them.
+2. **Network Security — 360 pts (36%).** Standard "boot2root" boxes: two machines, each with a user and root flag (~36 pts/flag). Thorough enumeration, then Linux and Windows privilege escalation. Reviewers cleared it in 2–3 hours. Very learnable — your most reliable points.
+3. **Active Directory — 240 pts (24%), the easiest.** Light on deep AD enumeration; a handful of classic misconfigurations chaining to Domain Admin (~74 pts/flag). Kerberoasting, AS-REP roasting, a pivot, and impacket/NetExec/BloodHound. Note: reviewers say even the "AD" and "network" sections contain web apps — web skills bleed into everything.
+
+**The strategic read:** bank Network + AD fast and completely (that's ~600 of your 750 from the two easier sections), then pour the remaining 48-hour clock into Web. So this course front-loads depth on Web, keeps Network/AD tight and drillable, and treats the **report** as a graded deliverable from day one — not an afterthought. See `reporting/` for exactly how the AI grader scores each field.
+
+---
+
+## How this course is organised
+
+Each module is a folder of Markdown lessons. A lesson follows the same shape every time:
+
+- **Concept** — what the vulnerability/technique is and *why it exists*.
+- **Methodology phase** — where it sits in recon → enumeration → exploitation → post-exploitation.
+- **Commands, explained flag by flag** — no copy-paste-and-pray.
+- **A worked example** — a full attack from first packet to flag, including the dead ends.
+- **Exercises** — with a matching TryHackMe room to do it for real, plus questions to self-check.
+- **Solutions / debrief** — collapsed at the bottom so you can try first.
+
+> **Working examples use TryHackMe rooms as the live lab.** PT1 is a THM cert and the exam runs on THM infrastructure, so the practice should too. The `.md` lessons are the teaching layer; the linked rooms are where you get your hands dirty. You'll want a THM Premium subscription (the exam purchase includes 3 months, but start free/earlier if you can).
+
+### Module map
+
+Before Module 1, absolute beginners do **Module 0** (`labs/`) and **`web/00-how-the-web-works.md`**, and keep **`glossary.md`** handy. Those cover setup and the fundamentals the attack modules build on.
+
+| # | Module | Folder | Exam weight | Rooms it maps to |
+|---|--------|--------|-------------|------------------|
+| 0 | Setup, Linux, Networking & Methodology | `labs/` (4 lessons) | Foundation | Kali/AttackBox, THM VPN, Linux & shells primer, note-taking |
+| 1 | Recon & Enumeration | `network/` | Every domain | Nmap, service enum, `ffuf`/`gobuster` |
+| 2 | Web — Core vulns | `web/` | ~60% | IDOR, SQLi, XSS, auth, file upload, SSTI |
+| 3 | Web — Burp Suite workflow | `web/` | ~60% | Burp: proxy, repeater, intruder |
+| 4 | Network — Service exploitation | `network/` | ~20% | SMB, FTP, SNMP, web-to-shell |
+| 5 | Privilege Escalation — Linux | `network/` | ~20% | GTFOBins, SUID, cron, sudo |
+| 6 | Privilege Escalation — Windows | `network/` | ~20% | PrintSpoofer, services, tokens |
+| 7 | Pivoting | `network/` | Network + AD | Ligolo-ng, chisel, port forwarding |
+| 8 | Active Directory | `active-directory/` | ~20% | Kerberoast, AS-REP, BloodHound, impacket, NetExec |
+| 9 | Reporting | `reporting/` | Pass/fail gate | Report template, scoping, evidence |
+
+---
+
+## The four-month plan
+
+The full week-by-week schedule (Aug → Dec 2026) lives in **[`study-plan.md`](/pt1-course/study-plan)**. Short version: ~10–12 hours/week, Web gets the most weeks, and you sit a full timed mock in the final fortnight.
+
+---
+
+## How to use a lesson
+
+0. **First time through the course?** Finish Module 0 (`labs/`) and `web/00` before Lesson 1 — they set up your box and teach the basics each lesson assumes.
+1. Read the Concept and Methodology sections first — understand *why* before *how*.
+2. Work the commands in your own Kali VM against the linked room. Type them; don't paste.
+3. Do the exercises **before** opening the solutions.
+4. After each room, write two paragraphs in your own notes as if it were a report finding. This trains the graded deliverable every single time, for free.
+
+---
+
+## Tooling you'll live in
+
+Kali Linux · `nmap` · `ffuf` / `gobuster` · Burp Suite · `sqlmap` · `hydra` · `netexec` (nxc) · `impacket` · BloodHound / SharpHound · `ligolo-ng` · GTFOBins + revshells.com as references. Every one gets introduced in the module where you first need it.
+
+---
+
+## Sources
+
+- [TryHackMe — Junior Penetration Tester (PT1) certification](https://tryhackme.com/certification/junior-penetration-tester)
+- [MRE Security — PT1 Certification Review](https://mresecurity.com/blog/try-hack-me-pt-1-certification-review-entry-level-penetration-testing-exam)
+- [happycamper84 — PT1 AD Exam Review](https://happycamper84.medium.com/tryhackme-junior-penetration-tester-pt1-ad-exam-review-b9b5fa225f44)
+- [TryHackMe — Jr Penetration Tester learning path](https://medium.com/@Kamal_S/tryhackme-jr-penetration-tester-learning-path-df079b558aa1)

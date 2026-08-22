@@ -1,0 +1,175 @@
+# Active Directory Module — Lesson 1: Fundamentals & Enumeration
+
+**Methodology phase:** Recon → Enumeration, inside the domain.
+**Why it matters for PT1:** the AD section is 240 pts (24%) and reviewers call it the *easiest* — but only if you understand the terrain. AD attacks aren't exotic; they're a handful of misconfigurations you find by enumerating. This lesson gives you the vocabulary and the enumeration workflow the rest of the module builds on.
+
+**Where you're starting from:** usually you've pivoted (Network Lesson 5) to reach the internal subnet, and you have either no creds, or one low-priv domain user's credentials. The goal of the whole module is to walk that up to **Domain Admin**.
+
+---
+
+## 1. The vocabulary you actually need
+
+| Term | What it is | Why you care |
+|---|---|---|
+| **Domain** | A group of computers/users under one administrative boundary (`corp.local`) | The target scope |
+| **Domain Controller (DC)** | The server running AD; holds all accounts and the password database (NTDS.dit) | The crown jewel — own it and you own the domain |
+| **Kerberos** | AD's authentication protocol (port 88) | Two attacks (Lesson 2) target its design |
+| **LDAP** | The directory query protocol (389/636) | How you enumerate users, groups, computers |
+| **SMB** | File sharing + remote admin (445) | Enumeration and lateral movement |
+| **SPN** (Service Principal Name) | Links a service to the account running it | Kerberoasting target (Lesson 2) |
+| **TGT** (Ticket Granting Ticket) | Your "master" Kerberos ticket, proving you logged in | You use it to request service tickets; forging one = Golden Ticket (Lesson 5) |
+| **TGS** (Ticket Granting Service ticket) | A ticket for one specific service | The blob you crack in Kerberoasting (Lesson 2) |
+| **NTLM hash** | The stored form of a password (shown as `LM:NT`) | You crack it, or "pass the hash" without cracking (Lesson 4) |
+| **ACL** (Access Control List) | The permissions set on an AD object | Misconfigured ACLs create escalation paths (Lesson 3) |
+| **Domain-joined** | A computer that's a member of the domain | Where you often land a foothold before attacking AD |
+| **Domain Admin (DA)** | The god-mode group | The win condition |
+
+That's enough to follow every attack in this module. You don't need to be an AD administrator — you need to recognise these when enumeration shows them.
+
+### How Kerberos works (the 30-second version)
+
+Kerberoasting and AS-REP roasting both abuse the Kerberos ticket exchange, so picture it once:
+
+```
+1. You log in.  Your machine proves it knows your password to the KDC (the ticket
+   service on the Domain Controller).                        [this proof step = "pre-authentication"]
+2. The KDC hands you a TGT — a "master ticket" proving you're authenticated.
+3. To use a service (a file share, a database), you show the TGT and ask the KDC
+   for a TGS — a service ticket for that one service.
+4. You present the TGS to the service, which trusts it and lets you in.
+```
+
+The two attacks target two weak points in this flow:
+
+- **Kerberoasting (Lesson 2):** step 3 — any authenticated user can request a **TGS** for any service account. That TGS is encrypted with the service account's password, so you crack it offline.
+- **AS-REP roasting (Lesson 2):** step 1 — some accounts have pre-authentication *disabled*, so the KDC will hand out a blob encrypted with their password to *anyone*, no login needed. You crack that offline.
+
+You don't need more Kerberos theory than this to do both attacks.
+
+> **"Where am I running these commands from?"** Every command in this module runs from your Kali box and reaches the Domain Controller over the network — either directly (if the DC is on a VPN-reachable subnet) or **through your pivot** (Network Lesson 5). If AD tools can't reach the DC, your pivot route/tunnel isn't up — fix that first (it's the AD version of "check the VPN"). See `network/05-pivoting.md`.
+
+---
+
+## 2. Initial access — getting your first domain foothold
+
+Two common starting points on the exam:
+
+- **You already have a credential** (found on a compromised Network box — credential reuse across the domain is everywhere), or
+- **You have nothing** and must find one. Routes:
+  - **AS-REP roasting with no creds** if any account has pre-auth disabled (Lesson 2) — you only need a valid *username*.
+  - **A null/guest SMB session** leaking users, then password spraying.
+  - **A web app on a domain-joined host** giving a shell as a service account.
+
+Get one valid `user:password` (or hash) and the domain opens up.
+
+---
+
+## 3. Enumeration with valid creds
+
+Once you have one domain credential, enumerate everything. **NetExec (nxc)** is the workhorse (you met it in Network Lesson 2).
+
+**Validate the credential and spray it across hosts:**
+```bash
+nxc smb 10.10.x.x -u jsmith -p 'Password1' -d corp.local
+nxc smb 10.10.x.0/24 -u jsmith -p 'Password1' -d corp.local
+```
+- A `[+]` means the cred is valid on that host. `(Pwn3d!)` means you have admin there — note it, that's a lateral-movement target.
+- Running it against the whole subnet maps where the credential works — instant credential-reuse recon.
+
+**Pull the domain's users, groups, and password policy:**
+```bash
+nxc smb 10.10.x.x -u jsmith -p 'Password1' --users
+nxc smb 10.10.x.x -u jsmith -p 'Password1' --groups
+nxc smb 10.10.x.x -u jsmith -p 'Password1' --pass-pol
+```
+- `--users` — every domain account (feed this list to Lesson 2's roasting attacks).
+- `--pass-pol` — the lockout threshold, so you know how aggressively you can password-spray without locking accounts.
+
+**LDAP enumeration** for deeper detail:
+```bash
+nxc ldap 10.10.x.x -u jsmith -p 'Password1' --asreproast asrep.txt
+nxc ldap 10.10.x.x -u jsmith -p 'Password1' --kerberoasting kerb.txt
+ldapsearch -x -H ldap://10.10.x.x -D 'jsmith@corp.local' -w 'Password1' -b 'DC=corp,DC=local'
+```
+- nxc's `--asreproast`/`--kerberoasting` flags find and dump those hashes in one shot — a huge shortcut over the manual impacket path (though you should know both; see Lesson 2).
+- `ldapsearch` is the raw query tool: `-x` simple auth, `-D` bind DN, `-w` password, `-b` search base. Use it when you want exactly what's in the directory.
+
+**No-cred / null session enumeration** (when you have nothing yet):
+```bash
+enum4linux-ng -A 10.10.x.x
+nxc smb 10.10.x.x -u '' -p '' --users
+```
+- `enum4linux-ng` throws every anonymous enumeration technique at the host — shares, users, groups, policy — and sometimes leaks a user list you can roast or spray. (Not installed by default on Kali: `sudo apt install enum4linux-ng` first — see `labs/01`.)
+
+---
+
+## 4. Set up your environment for AD tooling
+
+Two things save you constant pain:
+
+```bash
+# 1. point DNS/name resolution at the DC (AD is DNS-driven)
+echo "10.10.x.x corp.local dc01.corp.local" | sudo tee -a /etc/hosts
+```
+Kerberos and many tools need the domain FQDN to resolve. Missing this causes cryptic failures.
+
+```bash
+# 2. fix clock skew — Kerberos rejects tickets if your clock differs from the DC's
+sudo ntpdate 10.10.x.x     # or: sudo rdate -n 10.10.x.x
+```
+- Kerberos tolerates only ~5 minutes of clock difference. A skewed clock produces `KRB_AP_ERR_SKEW` errors that look like the attack is broken when it's just your time. **Sync first, always.**
+
+---
+
+## 5. Worked example — one credential to a full domain map
+
+Room: **[TryHackMe — Attacktive Directory](https://tryhackme.com/room/attacktivedirectory)** (and *Enterprise*).
+
+1. **Arrive on the internal subnet** via your pivot; add the DC to `/etc/hosts` and sync the clock.
+2. **Validate a found credential:** `nxc smb dc01.corp.local -u svc-web -p 'Summer2023!'` → `[+]` valid.
+3. **Dump the user list:** `nxc smb ... --users` → 40 accounts, including `svc-sql`, `backupadmin`, `Administrator`.
+4. **Check the password policy:** `--pass-pol` → lockout after 5 attempts. So spraying is possible but must be careful.
+5. **Grab roastable hashes in one pass:** `nxc ldap ... --kerberoasting kerb.txt --asreproast asrep.txt`.
+6. **Hand off to Lesson 2** to crack those hashes, and Lesson 3 (BloodHound) to find the path to DA.
+
+> **Dead end kept in:** my first Kerberos attack failed with a time-skew error and I spent 15 minutes convinced the exploit was wrong. The clock was 8 minutes off the DC. `sudo ntpdate <DC>` fixed it instantly. Lesson: on *any* weird Kerberos failure, check the clock and `/etc/hosts` before touching the attack.
+
+---
+
+## 6. Exercises
+
+**Exercise 1 — validate & map.** With one domain credential, use nxc across the subnet. Where is the credential valid, and where does it show `(Pwn3d!)`?
+**Exercise 2 — user list.** Pull the domain user list two ways (nxc `--users` and `enum4linux-ng` or `ldapsearch`). Do they agree?
+**Exercise 3 — environment.** Configure `/etc/hosts` and sync your clock to the DC. Prove Kerberos name resolution works (e.g. a tool resolves `corp.local`).
+**Exercise 4 — report it.** Write the "AD enumeration" section: how you obtained the initial credential, what the domain looks like (users/groups/policy), and the accounts you flagged for attack.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** `nxc smb 10.10.x.0/24 -u user -p pass` — `[+]` = valid login, `(Pwn3d!)` = local admin on that host (a lateral-movement/dumping target). Record the Pwn3d hosts; they're where you'll dump credentials in Lesson 4.
+
+**Exercise 2.** `nxc smb DC -u user -p pass --users` vs `enum4linux-ng -A DC` / `ldapsearch ... -b 'DC=corp,DC=local' '(objectClass=user)' sAMAccountName`. They should broadly agree; ldapsearch gives the richest attributes (SPNs, `userAccountControl` flags that reveal roastable accounts).
+
+**Exercise 3.** `/etc/hosts` maps the DC IP to `corp.local` and `dc01.corp.local`; `sudo ntpdate <DC>` syncs the clock. Success = a Kerberos tool (e.g. `impacket-GetUserSPNs`) runs without `KRB_AP_ERR_SKEW` or name-resolution errors.
+
+**Exercise 4 — model finding.**
+> **Title:** Excessive information disclosure via authenticated domain enumeration (Medium, enabling).
+> **Category (predefined):** Information Disclosure / Security Misconfiguration.
+> **Affected:** corp.local domain, DC `dc01.corp.local` (10.10.x.x).
+> **Initial reconnaissance:** Obtained credential `svc-web:[redacted]` via reuse from a compromised web host. `nxc smb --users --pass-pol` enumerated 40 accounts and the lockout policy; `nxc ldap` identified Kerberoastable and AS-REP-roastable accounts.
+> **Impact:** A single low-privilege credential exposes the full account inventory and roastable service accounts, providing the foothold for domain-wide compromise.
+> **Remediation:** Restrict authenticated LDAP enumeration where feasible, enforce strong service-account passwords, and monitor for bulk directory queries.
+
+</details>
+
+---
+
+## 7. Carry forward
+
+- AD is a handful of misconfigurations you *find by enumerating*. Know the vocabulary, then let nxc/ldapsearch/enum4linux-ng do the mapping.
+- One valid credential opens the domain: validate it everywhere (`(Pwn3d!)` = admin), pull users/groups/policy, dump roastable hashes.
+- Fix `/etc/hosts` and clock skew before any Kerberos attack — it's the #1 false "the exploit is broken" moment.
+
+**Next lesson:** `active-directory/02-kerberos-attacks.md` — AS-REP roasting and Kerberoasting: turning usernames and service accounts into crackable hashes.

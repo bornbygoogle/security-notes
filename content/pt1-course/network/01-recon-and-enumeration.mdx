@@ -1,0 +1,182 @@
+# Network Module — Lesson 1: Recon & Enumeration
+
+**Methodology phase:** Recon → Enumeration — the first thing you do on every target, in every section of the exam.
+**Why it's the foundation:** you cannot exploit what you haven't found. Reviewers who cleared the Network section in 2–3 hours did it because their enumeration was *thorough and fast*. Weak enumeration is the #1 reason people get stuck on a box for hours — the way in was a port or a directory they never looked at.
+
+**The rule to burn in:** *enumerate, don't guess.* When you're stuck, you haven't enumerated enough. Go wider before you go deeper.
+
+---
+
+## 1. The mental model
+
+Every target is an onion. You peel it in a fixed order:
+
+```
+Host up?  →  Which ports open?  →  Which service+version on each?  →  What can each service tell me?  →  A way in
+```
+
+Each layer feeds the next. Skipping a layer is how you miss the foothold.
+
+---
+
+## 2. Port scanning with nmap
+
+`nmap` is the workhorse. On the exam you'll run it against every host. The pattern that balances speed and coverage:
+
+> **Do this first, or command #1 errors.** The scans below save into a `nmap/` folder that doesn't exist yet — nmap will fail with *"Failed to open output file."* Make your working folders before you start (see `labs/02`):
+> ```bash
+> mkdir -p ~/thm/boxname/&#123;nmap,ffuf&#125; && cd ~/thm/boxname
+> ```
+> Now `-oN nmap/...` and `-o ffuf/...` work, and everything for this box is in one place.
+
+**Step 1 — fast full-port sweep** (find *every* open port quickly):
+```bash
+nmap -p- --min-rate 10000 -T4 10.10.x.x -oN nmap/allports.txt
+```
+- `-p-` — scan all **65535** ports, not just the top 1000. The exam loves putting a service on a high port (e.g. 8080, 8443, 3000). Miss `-p-` and you miss it.
+- `--min-rate 10000` — send at least 10,000 packets/sec. Turns a full scan from minutes into ~30 seconds on lab networks.
+- `-T4` — timing template "aggressive." Fast without being as unreliable as `-T5`.
+- `-oN nmap/allports.txt` — save normal-format output to a file. **Always save output** — it's report evidence and you'll re-read it constantly.
+
+**Step 2 — deep scan on the open ports only:**
+```bash
+nmap -p 22,80,445 -sC -sV -oN nmap/detail.txt 10.10.x.x
+```
+- `-p 22,80,445` — only the ports Step 1 found open. No point re-scanning all 65535.
+- `-sC` — run the **default NSE scripts** (safe enumeration scripts: banner grabbing, anonymous FTP check, SMB shares, HTTP titles). Huge amount of free intel.
+- `-sV` — **version detection**. `Apache 2.4.49` vs just "http" is the difference between a known exploit and a dead end.
+- Together `-sC -sV` is the enumeration bread and butter.
+
+**Optional — UDP for specific services:**
+```bash
+nmap -sU --top-ports 20 10.10.x.x
+```
+- `-sU` — UDP scan (slow, so limit it). `--top-ports 20` covers the useful ones. This is how you find **SNMP (161/udp)**, which the exam reviewers flagged as worth checking.
+
+> **Dead end kept in:** the classic mistake is running only `nmap 10.10.x.x` (default = top 1000 TCP ports) and concluding "only 80 is open." The real foothold was on 8080. Always `-p-` first. If a box feels impossible, re-run the full scan and the UDP scan before anything else.
+
+---
+
+## 3. Reading the scan — what each open port suggests
+
+| Port | Service | First move |
+|---|---|---|
+| 21 | FTP | Try anonymous login; check for writable dir |
+| 22 | SSH | Note it; brute-force is last resort. Look for creds elsewhere first |
+| 25/110/143 | Mail | User enumeration (VRFY), often low value |
+| 80/443/8080/8443 | HTTP(S) | Web enum (Section 4) — usually the way in |
+| 139/445 | SMB | Enumerate shares & users (Lesson 2) |
+| 161/udp | SNMP | `snmpwalk` with `public` (Lesson 2) |
+| 3306/5432/1433 | Databases | Try default creds; often reachable after foothold |
+| 3389 | RDP | Windows box; note for later access with creds |
+| 5985 | WinRM | Remote PowerShell — `evil-winrm` once you have creds |
+
+**Match the version to an exploit.** Once `-sV` gives you `vsftpd 2.3.4` or `Apache 2.4.49`, search:
+```bash
+searchsploit apache 2.4.49
+searchsploit vsftpd 2.3.4
+```
+- `searchsploit` is the offline Exploit-DB search on Kali. It's fast, works without internet, and points you at a public PoC. Cross-check with a web search for the CVE.
+
+---
+
+## 4. Web content discovery (when a web port is open)
+
+A web server's real attack surface is the pages/endpoints you can't see from the homepage. Two tools; learn both, prefer `ffuf` for speed.
+
+**Directory & file brute forcing with ffuf:**
+
+> **SecLists isn't installed by default on Kali** — the `/usr/share/seclists/...` paths below won't exist until you run `sudo apt install seclists` (see `labs/01`). If a wordlist path errors, that's why. The `/usr/share/wordlists/dirb/common.txt` list (used in the gobuster example) *does* ship by default if you want a quick start.
+
+```bash
+ffuf -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+     -u http://10.10.x.x/FUZZ -e .php,.txt,.html -mc 200,301,302,403 -o ffuf/dirs.json
+```
+- `-w <wordlist>` — the wordlist. **SecLists** is pre-installed on Kali and is the standard; `directory-list-2.3-medium.txt` is the go-to.
+- `-u http://.../FUZZ` — `FUZZ` is the injection point; each word replaces it.
+- `-e .php,.txt,.html` — also try these **extensions** on each word (finds `admin.php`, `backup.txt`).
+- `-mc 200,301,302,403` — **match** these status codes. `403 Forbidden` is interesting: the thing *exists* but you're blocked — worth probing.
+- `-o ffuf/dirs.json` — save results.
+
+**gobuster** (the classic alternative — know it too):
+```bash
+gobuster dir -u http://10.10.x.x -w /usr/share/wordlists/dirb/common.txt -x php,txt
+```
+- `dir` mode = directory brute force; `-x` = extensions. Same idea, different tool. Exam reviewers named both `gobuster` and `ffuf`.
+
+**Virtual host / subdomain discovery** (when a site uses name-based routing):
+```bash
+ffuf -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt \
+     -u http://10.10.x.x -H "Host: FUZZ.target.thm" -fs 4242
+```
+- `-H "Host: FUZZ.target.thm"` — fuzz the **Host header** to find vhosts the default page hides.
+- `-fs 4242` — **filter** out responses of the default page's size (get its size first), so only real vhosts show.
+
+> **Add the hostname to `/etc/hosts`.** Many THM boxes expect `10.10.x.x target.thm`. If the site redirects to a hostname, `echo "10.10.x.x target.thm" | sudo tee -a /etc/hosts` or nothing resolves.
+
+---
+
+## 5. Worked example — from nothing to a foothold candidate
+
+Room: **[TryHackMe — Vulnversity](https://tryhackme.com/room/vulnversity)** (and *Basic Pentesting*).
+
+**Step 1 — full port scan.**
+```bash
+nmap -p- --min-rate 10000 -T4 10.10.x.x -oN nmap/allports.txt
+```
+Open: 21, 22, 139, 445, 3128, 3333. Note **3333** — a non-standard HTTP port a default scan would've missed.
+
+**Step 2 — deep scan.**
+```bash
+nmap -p 21,22,139,445,3128,3333 -sC -sV -oN nmap/detail.txt 10.10.x.x
+```
+Reveals FTP (vsftpd), SMB (Samba), and an Apache server on **3333**. The web app is the likely entry.
+
+**Step 3 — enumerate the web app on 3333.**
+```bash
+ffuf -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt \
+     -u http://10.10.x.x:3333/FUZZ -mc 200,301,403
+```
+Finds `/internal/` — an upload page. That's your lead into the file-upload attack from `web/04-file-upload-lfi-command-injection.md`.
+
+> **Dead end kept in:** I first ran `ffuf` against port 80 out of habit and got nothing — because the app was on 3333. Read your nmap output and fuzz the *right* port. Small mistake, ten minutes gone.
+
+**Step 4 — write down everything.** Every open port, version, and discovered path goes into your notes now — this becomes the "Enumeration" block of the network finding in your report.
+
+---
+
+## 6. Exercises
+
+**Exercise 1 — full vs default scan.** Scan a box with default nmap, then with `-p-`. Did the full scan reveal a port the default missed? (This is the lesson that saves you on the exam.)
+**Exercise 2 — version to exploit.** From a `-sV` result, use `searchsploit` to find a matching public exploit. Note the CVE.
+**Exercise 3 — content discovery.** Fuzz a web server with `ffuf` and `gobuster`. Find a hidden directory or file. Which `-mc`/`-x` settings surfaced it?
+**Exercise 4 — report the recon.** Write the "Enumeration" section for one host: the nmap commands, open ports, service versions, and discovered web paths. This is a graded block on the exam.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** Almost always yes on exam-style boxes — high ports (3333, 8080, 8443) live outside the top 1000. The takeaway: `-p-` is not optional. Default nmap is for a quick first look only.
+
+**Exercise 2.** e.g. `searchsploit apache 2.4.49` → path traversal / RCE (CVE-2021-41773). Confirm the version matches exactly before trusting the PoC — off-by-one versions often aren't vulnerable.
+
+**Exercise 3.** `-mc 200,301,302,403` catches redirects and forbidden-but-present paths; `-e .php,.txt,.bak` catches files. A hidden `/admin` or `config.php.bak` is a common find. `403` entries are worth manual probing — the resource exists.
+
+**Exercise 4 — model block.**
+> **Enumeration — 10.10.x.x**
+> `nmap -p- --min-rate 10000 -T4` revealed open TCP ports 21 (vsftpd 3.0.3), 22 (OpenSSH 7.2), 445 (Samba 4.3.11), 3333 (Apache 2.4.18).
+> `nmap -sC -sV` on those ports confirmed anonymous FTP disabled, SMB shares `[list]`, and an HTTP app on 3333.
+> `ffuf` content discovery on port 3333 identified `/internal/` (file upload) and `/css/`, `/images/`. The upload endpoint was selected as the initial access vector.
+
+</details>
+
+---
+
+## 7. Carry forward
+
+- Fixed order: host → ports (`-p-`!) → versions (`-sC -sV`) → per-service enum → foothold. Skipping a layer loses hours.
+- Always save nmap and ffuf output to files — it's your report evidence.
+- "Stuck" almost always means "enumerate wider." Re-run full TCP + UDP before assuming a box is broken.
+
+**Next lesson:** `network/02-service-exploitation.md` — turning enumerated services (SMB, FTP, SNMP, web) into a shell, plus getting and stabilising that shell.

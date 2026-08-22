@@ -1,0 +1,107 @@
+# Module 0 — Lesson 4: Methodology & Note-Taking
+
+**Why this lesson:** hacking a box isn't random poking — it follows a repeatable method. Learn the method and you always know "what do I do next?" This lesson gives you that method and a note template that doubles as your exam-report source. Do this now; it pays off on every single box.
+
+---
+
+## 1. The methodology — the five phases
+
+Every engagement, from a practice room to the PT1 exam, follows the same loop. When you're stuck, name the phase you're in and ask "have I really finished it?"
+
+```
+1. RECON        Find the target and its attack surface (ports, services, versions)
+2. ENUMERATION  Dig into each service for details, content, and credentials
+3. EXPLOITATION Turn a weakness into access — a foothold (your first shell)
+4. POST-EXPLOIT Escalate to root/SYSTEM; loot creds; pivot to other machines
+5. REPORTING    Write up what you found, with evidence, as you go
+```
+
+Two truths beginners learn the hard way:
+
+- **Most time is spent in Recon + Enumeration, not Exploitation.** The way in is almost always something you *find*, not something you cleverly force. "I'm stuck" nearly always means "I haven't enumerated enough" — go back to phase 1–2 and look wider (a port you skipped, a directory you didn't fuzz, a service you didn't check).
+- **Reporting is phase 5 but you do it continuously.** You don't hack for two days then write. You write each finding the moment you get it, while the details and evidence are fresh.
+
+This course's modules map onto these phases: `network/01` (recon/enum) → `web/*` and `network/02` (exploitation) → `network/03–05` + `active-directory/*` (post-exploit) → `reporting/*` (throughout).
+
+---
+
+## 2. The "when I'm stuck" checklist
+
+Pin this. When a box feels impossible, work down the list — it's almost always here:
+
+1. Did I scan **all** ports (`nmap -p-`), not just the default top 1000?
+2. Did I check **UDP** (`-sU`) for SNMP/DNS?
+3. Did I get **service versions** (`-sV`) and search them (`searchsploit`)?
+4. On web: did I **fuzz for hidden directories/files** (`ffuf`/`gobuster`) on *every* web port?
+5. Did I read **every** file I can access, including hidden ones (`ls -la`), for credentials?
+6. Did I try **found/default credentials** on every service before brute forcing?
+7. Am I attacking the **right IP and port**?
+
+Time-box each service: if 30 minutes yields nothing, note it and move on — come back with fresh eyes.
+
+---
+
+## 3. Note-taking — why it's not optional
+
+On the PT1 exam the **report is graded and decides pass/fail** (see the `reporting/` module). Good notes taken *during* the attack become the report with almost no extra work. Bad notes mean re-hacking the box at hour 40 to remember what you did. Take notes from box #1 of your studies so it's a reflex by exam day.
+
+**Keep one folder per box** (from `labs/02`):
+```bash
+mkdir -p ~/thm/boxname/{nmap,ffuf,loot}
+cd ~/thm/boxname
+```
+Drop scan outputs, screenshots, and downloaded loot in here as you go. Your report is then assembled from files, not memory.
+
+**Tools:** a plain Markdown file (`.md`) works and matches this course. Popular alternatives: CherryTree, Obsidian, Joplin. Don't overthink it — a consistent text file beats a fancy tool used inconsistently.
+
+---
+
+## 4. The per-box notes template
+
+Copy this into a `notes.md` for each box. It mirrors the exam's report fields (see `reporting/report-template.md`), so filling it *is* practising the graded skill.
+
+```markdown
+# Box: <name>   Target IP: <10.10.x.x>   My IP: <tun0 addr>
+
+## Recon
+- nmap all-ports: <command + open ports>
+- nmap detail (-sC -sV): <service versions>
+
+## Enumeration
+- Port 80: ffuf found <paths>
+- Port 445: shares <...>
+- Interesting: <versions to exploit, creds found>
+
+## Exploitation (foothold)
+- Vector: <how I got in — the vuln/service>
+- Command(s): <exact commands>
+- Evidence: <paste terminal output / HTTP request>
+- USER FLAG: THM{...}
+
+## Privilege Escalation
+- Vector: <sudo / SUID / cron / token / etc.>
+- Command(s): <exact steps>
+- Evidence: <id output as root/SYSTEM>
+- ROOT FLAG: THM{...}
+
+## For the report
+- Category (predefined): <...>
+- CVSS: <score + vector>
+- Remediation: <the fix>
+```
+
+---
+
+## 5. Carry forward
+
+- Five phases: **Recon → Enumeration → Exploitation → Post-exploitation → Reporting.** Stuck = go back to enumeration.
+- One folder per box, notes written *as you go*, in the report's shape.
+- Every lesson's "report it" exercise trains this. Do them — the report is what most people underestimate.
+
+---
+
+## Module 0 complete — you're ready
+
+You now have: an attack box connected to targets (`labs/01`), the Linux skills to drive it (`labs/02`), the networking and shell concepts to understand the attacks (`labs/03`), and a method plus note habit (`labs/04`).
+
+**Start the course proper with `web/00-how-the-web-works.md`, then follow the schedule in `../study-plan.md`.** New to everything? The study plan's Phase 1 note tells you how much extra time to give yourself.

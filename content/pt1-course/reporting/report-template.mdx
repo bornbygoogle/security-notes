@@ -1,0 +1,150 @@
+# PT1 Penetration Test Report — Template
+
+> **How to use this:** copy this file per engagement (`cp report-template.md my-report.md`). Fill it as you work, not at the end. On the real exam you'll transcribe these fields into TryHackMe's in-environment reporting app (dropdowns + text fields) — so keeping your notes in this shape makes exam-day reporting pure data entry. Mirror the exam's own structure closely; deviating loses points.
+>
+> **Reminders baked in from the grading rules:** always attach the **flag** to a finding · use a **predefined category** (not a custom label) · fill **every** field · write **technical, keyword-dense** content · paste **real terminal/HTTP evidence**. Include an *initial reconnaissance* line in every write-up.
+
+---
+
+## 0. Engagement details
+
+| Field | Value |
+|---|---|
+| Client / Exam | TryHackMe PT1 |
+| Tester | &lt;your name&gt; |
+| Date | &lt;YYYY-MM-DD&gt; |
+| Scope | Web application, Network, Active Directory (as provided in Rules of Engagement) |
+| Methodology | Recon → Enumeration → Exploitation → Post-exploitation → Reporting |
+
+---
+
+# SECTION 1 — WEB APPLICATION PENTEST (400 pts / 40%)
+
+## 1.0 Section summary (~20% of section grade — write it TECHNICAL, keyword-dense)
+
+&lt;Name each vulnerability found and its severity. State overall risk in concrete technical terms — e.g. "SQL injection permitting full extraction of the users table; stored XSS enabling session theft; unrestricted file upload yielding RCE as www-data." Reference tools used (Burp, sqlmap, ffuf). Do NOT write this for executives.&gt;
+
+## 1.1 Finding: &lt;vuln name&gt; on &lt;endpoint&gt;
+
+- **Category (predefined):** &lt;e.g. SQL Injection&gt;
+- **Flag:** `THM{...}`
+- **CVSS:** &lt;score&gt; (`CVSS:3.1/AV:.../...`)
+- **Affected:** &lt;URL / parameter&gt;
+
+**Description / write-up**
+- *Initial reconnaissance:* &lt;how you found it — the ffuf hit, the Burp request, the parameter that errored&gt;
+- *Vulnerability:* &lt;what it is and why it exists here&gt;
+- *Exploitation:* &lt;step-by-step with exact commands/requests&gt;
+
+**Evidence** (paste real output)
+```
+<terminal output / HTTP request + response from Burp>
+```
+
+**Impact**
+&lt;what an attacker gains — data read, RCE, account takeover&gt;
+
+**Remediation**
+&lt;the concrete fix — parameterised queries, output encoding, whitelist upload validation, etc.&gt;
+
+---
+
+## 1.2 Finding: &lt;vuln name&gt; on &lt;endpoint&gt;
+&lt;duplicate the 1.1 block for each web vulnerability — the section provides a list of potential vulns; expect ~4 flags&gt;
+
+---
+
+# SECTION 2 — NETWORK PENTEST (360 pts / 36%)
+
+## 2.0 Section summary (technical, keyword-dense)
+
+&lt;Summarise both machines: services found, exploited entry point, privesc technique, user + root flags obtained. Name the tools (nmap, hydra, gobuster, GTFOBins technique).&gt;
+
+## 2.1 Host: &lt;IP / hostname&gt;
+
+- **Category (predefined):** &lt;e.g. Remote Code Execution / Privilege Escalation&gt;
+- **User flag:** `THM{...}`  (~36 pts)
+- **Root flag:** `THM{...}`  (~36 pts)
+- **CVSS:** &lt;score&gt; (`CVSS:3.1/...`)
+
+**Enumeration**
+```
+nmap -sC -sV -oN nmap/<host>.txt <IP>
+<key findings: open ports, service versions>
+```
+
+**Initial access**
+- *Initial reconnaissance:* &lt;the service/version/creds that led in&gt;
+- *Exploitation:* &lt;exact steps to the foothold, commands pasted&gt;
+```
+<evidence: the exploit run and the shell>
+```
+
+**Privilege escalation**
+- *Technique:* &lt;SUID / sudo / cron / kernel / service — name it&gt;
+- *Steps + evidence:*
+```
+<linpeas/GTFOBins line, the escalation command, id output as root>
+```
+
+**Impact**
+&lt;full compromise of the host as root/SYSTEM; foothold for lateral movement&gt;
+
+**Remediation**
+&lt;patch the service, remove the SUID bit / fix sudoers, rotate creds, least privilege&gt;
+
+---
+
+## 2.2 Host: &lt;IP / hostname&gt;
+&lt;duplicate the 2.1 block for the second machine&gt;
+
+---
+
+# SECTION 3 — ACTIVE DIRECTORY PENTEST (240 pts / 24%)
+
+## 3.0 Section summary (technical, keyword-dense)
+
+&lt;Describe the path from initial foothold to Domain Admin: the misconfigurations chained, the tools (NetExec, impacket, BloodHound), and each flag obtained. AD flags are worth ~74 pts each — do not leave any write-up blank.&gt;
+
+## 3.1 Finding: &lt;technique — e.g. Kerberoasting&gt;
+
+- **Category (predefined):** &lt;e.g. Kerberoasting / AS-REP Roasting / Credential Access&gt;
+- **Flag:** `THM{...}`  (~74 pts)
+- **CVSS:** &lt;score&gt; (`CVSS:3.1/...`)
+- **Affected:** &lt;domain / host / account&gt;
+
+**Description / write-up**
+- *Initial reconnaissance:* &lt;how you enumerated it — nxc, BloodHound query, SPN listing&gt;
+- *Vulnerability:* &lt;the misconfiguration — e.g. service account with SPN and weak password&gt;
+- *Exploitation:*
+```
+<impacket-GetUserSPNs / GetNPUsers command, hashcat crack, the resulting creds>
+```
+
+**Impact**
+&lt;what this grants — a domain user, lateral movement, ultimately Domain Admin&gt;
+
+**Remediation**
+&lt;strong service-account passwords / gMSA, disable pre-auth-disabled accounts, tiering&gt;
+
+---
+
+## 3.2 Finding: &lt;technique&gt;
+&lt;duplicate for each AD step in the chain to Domain Admin&gt;
+
+---
+
+# APPENDIX A — Tooling & commands used
+
+&lt;A running list of the exact commands you ran, per phase. Also serves as your personal cheat sheet.&gt;
+
+# APPENDIX B — Flags collected
+
+| Section | Flag | Points (approx) |
+|---|---|---|
+| Web #1 | `THM{...}` | ~95 (incl. write-up fields) |
+| Network user | `THM{...}` | ~36 |
+| Network root | `THM{...}` | ~36 |
+| AD #1 | `THM{...}` | ~74 |
+| ... | ... | ... |
+| **Running total** | | **/1000 (need 750)** |

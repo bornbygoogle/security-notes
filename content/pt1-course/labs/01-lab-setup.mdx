@@ -1,0 +1,137 @@
+# Module 0 — Lesson 1: Your Lab (Attack Box + Connecting to TryHackMe)
+
+**Read this before anything else in the course.** Every other lesson assumes you have a working attack machine connected to a target. This lesson gets you there. If you've never done this, don't skip a step — the single most common reason a beginner "can't get the first command to work" is that this setup wasn't finished.
+
+**Goal of this lesson:** by the end you can (1) get a Kali attack box, (2) connect to a TryHackMe target, (3) know your target's IP *and your own IP*, and (4) run one command against a live box.
+
+---
+
+## 1. What you're building
+
+Penetration testing needs two computers talking to each other over a network:
+
+- **Your attack box** — a Linux machine loaded with hacking tools. The standard is **Kali Linux**. This is *your* side.
+- **The target** — the vulnerable machine you're attacking. On TryHackMe you start it from the room page; it gets its own IP address on a private network.
+
+They're connected either through TryHackMe's **VPN** (if you run Kali on your own computer) or automatically (if you use TryHackMe's in-browser **AttackBox**). That's the whole picture. Everything else is detail.
+
+---
+
+## 2. Getting an attack box — pick ONE
+
+### Option A — TryHackMe AttackBox (easiest, zero install)
+TryHackMe gives you a Kali machine *in your browser*. Nothing to install, no VPN to configure — it's already on the target network.
+
+- On any room page, click **Start AttackBox**. A Kali desktop opens in your browser.
+- **Best for absolute beginners.** With a paid THM subscription you get plenty of usage; the free tier limits your hours.
+- Downside: it's in a browser, times out after a while, and you don't keep your files between sessions unless you save them off. Fine for learning; you'll want your own box eventually.
+
+**If you use the AttackBox, you can skip the VPN section (4) entirely — it's already connected.** Jump to Section 5.
+
+### Option B — Kali on your own computer (what real testers use)
+Install Kali as a **virtual machine** (a computer running inside your computer). You need virtualization software first:
+
+- **VirtualBox** (free, Windows/Mac/Linux) or **VMware Workstation Player** (free).
+- Download the **Kali pre-built VM image** from `https://www.kali.org/get-kali/#kali-virtual-machines` — it's already set up, you just import it. This is far easier than installing from scratch.
+- Import into VirtualBox/VMware, start it, log in (default user/pass on the download page — change it).
+
+> **What is a virtual machine (VM)?** A full second computer that runs in a window on your real one. It's isolated: you can break things, run malware samples, and reset it without touching your actual PC. This isolation is *why* security work uses VMs — never run challenge material on your host OS.
+
+### Option C — Kali on WSL2 (Windows only, intermediate)
+Windows can run Kali as a WSL2 "app" (`wsl --install`, then install Kali from the Microsoft Store). It's lightweight but has networking quirks (VPN and some tools are fiddlier). If you're a true beginner, use Option A or B first.
+
+---
+
+## 3. What's already installed (and what isn't)
+
+Kali comes with **most** of this course's tools pre-installed: `nmap`, `ffuf`, `gobuster`, `hydra`, `sqlmap`, `nc` (netcat), `curl`, `tcpdump`, `hashcat`, `smbclient`, `smbmap`, `snmpwalk`, `impacket` (as `impacket-*` commands), and Burp Suite. Depending on your Kali build, `netexec`, `evil-winrm`, and `bloodhound-python` may also already be there — check with `command -v nxc`.
+
+A few you'll likely **install yourself** the first time you need them (verified needed on a fresh Kali):
+```bash
+sudo apt update
+sudo apt install -y seclists enum4linux-ng netexec evil-winrm bloodhound.py
+```
+- `seclists` — the wordlist collection lessons point at (`/usr/share/seclists/...`); **not installed by default**, so those paths won't exist until you run this.
+- `enum4linux-ng` — the no-cred SMB/AD enumeration tool (used in `active-directory/01`); **not installed by default**.
+- `netexec` (the `nxc` command) — the AD/SMB workhorse.
+- `evil-winrm` — remote Windows shells.
+- `bloodhound.py` — provides the `bloodhound-python` collector.
+
+> Tip: `command -v <tool>` tells you if something's installed (prints a path) or not (prints nothing). Use it before assuming a tool is missing.
+
+Some tools are **downloaded, not apt-installed** because they run *on the target*: linPEAS, winPEAS, PrintSpoofer, GodPotato, Ligolo-ng, chisel. Lessons that use them tell you where — see also the "Getting tools onto a target" section in `labs/02-linux-primer.md`.
+
+> **Password lists live at `/usr/share/wordlists/`.** The famous `rockyou.txt` ships **compressed** on Kali. Unzip it once: `sudo gunzip /usr/share/wordlists/rockyou.txt.gz`. After that it's a plain file at `/usr/share/wordlists/rockyou.txt`.
+
+---
+
+## 4. Connecting to TryHackMe over VPN (skip if using the AttackBox)
+
+If you run Kali yourself (Option B/C), you reach targets through TryHackMe's VPN.
+
+1. On TryHackMe, go to your **Access** page (`https://tryhackme.com/access`), pick a VPN server, and **download your `.ovpn` file** (it's named like `yourname.ovpn`).
+2. In Kali, open a terminal in the folder where it downloaded and run:
+   ```bash
+   sudo openvpn yourname.ovpn
+   ```
+   - `sudo` — run as administrator (VPNs need to change network settings).
+   - Leave this terminal **open** — closing it drops the VPN. Open a *second* terminal for your actual work.
+3. Wait for the line `Initialization Sequence Completed`. That means you're connected.
+4. Confirm on the THM site: the Access page shows a green **Connected** indicator.
+
+> **What is a VPN here?** A private tunnel between your Kali box and TryHackMe's target network. Without it, the targets (private `10.x` addresses) simply aren't reachable from your computer.
+
+---
+
+## 5. The two IP addresses you must know
+
+This trips up more beginners than any command. There are **two** machines, so there are **two** IPs:
+
+### Your target's IP
+- Shown on the **room page** after you click **Start Machine** — usually written as something like `10.10.123.45`.
+- This is what you put where the lessons write `10.10.x.x` (a placeholder — **never type `10.10.x.x` literally**; substitute your box's real IP).
+
+### Your own IP (your "attacker IP")
+- This is *your* address on the VPN, and you need it whenever a lesson says `ATTACKER_IP` (for example, catching a reverse shell — `web/04`, `network/02`).
+- Find it:
+  ```bash
+  ip addr show tun0
+  ```
+  - `tun0` is the VPN network interface. The address after `inet` (like `10.9.5.20`) is your attacker IP.
+  - On the AttackBox the interface may be different; `ip a` lists them all — use the `10.x` one on the same network as your target.
+
+> **`ATTACKER_IP` = your `tun0` address, always.** Write it on a sticky note. Half of all "my reverse shell won't connect" problems are the wrong IP here.
+
+---
+
+## 6. Prove it works — your first command
+
+With a target started and the connection up:
+```bash
+ping -c 4 10.10.123.45      # use YOUR target's IP
+```
+- `ping` sends test packets; `-c 4` sends four then stops.
+- Replies = you can reach the box. **You're ready to start the course.**
+- No replies? Some boxes block ping — that's normal. Try the first real scan from `network/01` instead; if that also fails, re-check the VPN (Section 4) and that the machine is started.
+
+---
+
+## 7. Troubleshooting the setup (the usual suspects)
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Can't reach the target at all | VPN not connected | Re-run `sudo openvpn`, wait for "Initialization Sequence Completed"; check the THM Access page shows Connected |
+| `ping`/scan times out | Machine not started, or wrong IP | Click Start Machine; copy the IP from the room page exactly |
+| Reverse shell never connects | Wrong `ATTACKER_IP` | Re-check `ip addr show tun0`; use *that* address |
+| A tool is "command not found" | Not installed | `sudo apt install <tool>` (Section 3) |
+| `rockyou.txt` "No such file" | It's still gzipped | `sudo gunzip /usr/share/wordlists/rockyou.txt.gz` |
+
+---
+
+## 8. Carry forward
+
+- Two machines, two IPs: the **target** (from the room page, = `10.10.x.x` in lessons) and **you** (`ip addr show tun0`, = `ATTACKER_IP`).
+- Easiest start: TryHackMe AttackBox (no install, no VPN). Longer-term: Kali in a VM + the THM VPN.
+- Most tools ship with Kali; a few you `apt install`, a few you download onto the target.
+
+**Next lesson:** `labs/02-linux-primer.md` — the Linux command-line basics every other lesson assumes.

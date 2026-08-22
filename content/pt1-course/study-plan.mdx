@@ -1,0 +1,89 @@
+# PT1 Study Plan — August to December 2026
+
+Roughly **18 weeks** from now (2026-08-22) to a late-December exam sitting. Budget **10–12 hours/week**. If you can only do 6–8, drop the "stretch" rooms and keep the core ones.
+
+The plan front-loads Web because it's ~60% of the grade and the hardest section. Network and AD are compressed because reviewers clear them in hours once the technique is known. The last two weeks are a timed dress rehearsal plus report practice — treat those as non-negotiable.
+
+---
+
+## Phase 1 — Foundations (Weeks 1–2, late Aug)
+
+Goal: a working attack box, a note-taking habit, and enumeration reflexes.
+
+| Week | Module | Do this |
+|---|---|---|
+| 1 | Module 0 (`labs/`) + web basics | Work all four `labs/` lessons: get Kali/AttackBox connected, Linux primer, networking & shells primer, methodology + notes. Then read `web/00-how-the-web-works.md`. Room: *Linux Fundamentals*, *Nmap* basics. |
+| 2 | Recon & Enumeration (`network/01`) | Full `nmap` workflow; `ffuf`/`gobuster`. Rooms: *Vulnversity*, *Basic Pentesting*. |
+
+**Gate to pass before moving on:** you can enumerate an unknown box (ports → services → web content → creds) without looking up the commands.
+
+> **Starting from zero (never used a terminal, no networking background)?** Two weeks is not enough for you — that's the pace for someone who already has Linux/networking basics. **Budget 3–4 extra weeks on Phase 1:** spend real time in `labs/`, do the THM *Linux Fundamentals* and *Network Fundamentals* paths, and don't move to Web until the Phase-1 gate is genuinely comfortable. Shifting the whole schedule a month later still lands you before a year-end exam. Rushing the foundation is the #1 way beginners stall in Phase 2.
+
+---
+
+## Phase 2 — Web, the main event (Weeks 3–8, Sep–early Oct)
+
+This is where you spend the most time. One vuln class per week, each with a room and a written finding.
+
+| Week | Topic | Room(s) |
+|---|---|---|
+| 3 | Burp Suite workflow (proxy, repeater, intruder) | *Burp Suite: The Basics*, *Repeater* |
+| 4 | SQL injection (start with `web/01-sql-injection.md`) | *SQL Injection*, *SQLi Lab* |
+| 5 | IDOR & broken access control | *IDOR*, *Authentication Bypass* |
+| 6 | XSS (reflected, stored, DOM) | *Cross-site Scripting*, *XSS* |
+| 7 | File upload, LFI/RFI, command injection | *Upload Vulnerabilities*, *File Inclusion* |
+| 8 | SSTI + web catch-up / rabbit-hole discipline | *SSTI*, *OWASP Top 10* review |
+
+**Gate:** given a web app you've never seen, you can find and exploit at least one injection *and* one access-control flaw, and write each up as a finding.
+
+---
+
+## Phase 3 — Network & privilege escalation (Weeks 9–12, mid-Oct to early Nov)
+
+| Week | Topic | Room(s) |
+|---|---|---|
+| 9 | Service exploitation (SMB, FTP, SNMP) | *Services*, *Steel Mountain* |
+| 10 | Linux privesc | *Linux PrivEsc*, GTFOBins drills |
+| 11 | Windows privesc | *Windows PrivEsc*, *PrintSpoofer* |
+| 12 | Pivoting (ligolo-ng / chisel) | *Wreath* (pivoting section) |
+
+**Gate:** you can take a foothold shell to root/SYSTEM on both OSes, and forward a port to reach a second subnet.
+
+---
+
+## Phase 4 — Active Directory (Weeks 13–15, Nov)
+
+| Week | Topic | Room(s) |
+|---|---|---|
+| 13 | AD fundamentals + enumeration | *Attacktive Directory*, *Enterprise* |
+| 14 | Kerberoasting, AS-REP roasting, BloodHound | *Attacking Kerberos*, *Post-Exploitation Basics* |
+| 15 | Full AD chain to Domain Admin (impacket, NetExec) | *Throwback* / *Holo* AD sections |
+
+**Gate:** from a single domain user, you can reach Domain Admin using at least two distinct misconfigurations, with impacket + NetExec + BloodHound in the loop.
+
+---
+
+## Phase 5 — Report & dress rehearsal (Weeks 16–18, late Nov–Dec)
+
+| Week | Focus |
+|---|---|
+| 16 | Reporting module (`reporting/`). Write a full report for one earlier room end to end. |
+| 17 | **Timed 48-hour mock** on a fresh multi-machine room you haven't seen. Produce the report. |
+| 18 | Review mock gaps, drill weak spots, book and sit the exam. |
+
+**Gate:** you produced a complete, professional report under time pressure. That report — not the flags — is what most people underestimate.
+
+---
+
+## Standing habits (every week, not optional)
+
+- **Write a finding after every box.** Two paragraphs: what was vulnerable, how you exploited it, evidence, remediation. This *is* the graded skill.
+- **Keep a personal cheat-sheet** that grows as you go. On exam day you'll rely on your own notes, not a blog.
+- **Log the rabbit holes.** When something wasted an hour, write down the tell that would've saved you. Web is full of these and the exam punishes tunnel vision.
+- **Time-box enumeration.** If 30 minutes on a service yields nothing, move on and come back. The 48-hour clock is the real adversary.
+
+---
+
+## Reality check on pacing
+
+18 weeks at 10–12 h/week is enough to pass *if* Web gets its six weeks. The two failure modes I'd bet on: (1) rushing Web to "get to the fun AD stuff," then drowning in the 60% section on exam day; (2) skipping report practice and losing the pass despite having the points. The schedule above is built to prevent both. If you fall behind, cut AD depth (it's the easiest section) before you cut Web or reporting.

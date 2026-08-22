@@ -1,0 +1,73 @@
+# CVSS 3.1 Quick Reference for PT1
+
+You must score every vulnerability. This gets you a defensible number and vector in under a minute. Generate the exact vector with the official calculator and paste both the score and the string into your report — the vector itself is keyword-dense, which the AI grader likes.
+
+**Calculator:** `https://www.first.org/cvss/calculator/3.1`
+
+---
+
+## The eight base metrics (what the calculator asks)
+
+| Metric | Options | Plain-English question |
+|---|---|---|
+| **AV** Attack Vector | N/A/L/P | How close must the attacker be? **N**etwork (remote) is worst, then **A**djacent, **L**ocal, **P**hysical |
+| **AC** Attack Complexity | L/H | How hard to pull off? **L**ow = reliable, **H**igh = needs special conditions |
+| **PR** Privileges Required | N/L/H | What access is needed first? **N**one is worst |
+| **UI** User Interaction | N/R | Must a victim do something? **N**one is worst, **R**equired (e.g. click a link) is less severe |
+| **S** Scope | U/C | Does it break out of its component? **C**hanged (affects other systems) is worse |
+| **C** Confidentiality | N/L/H | Data disclosure impact |
+| **I** Integrity | N/L/H | Data modification impact |
+| **A** Availability | N/L/H | Uptime impact |
+
+Severity bands: **0.1–3.9 Low · 4.0–6.9 Medium · 7.0–8.9 High · 9.0–10.0 Critical.**
+
+---
+
+## Ready-made vectors for common PT1 findings
+
+Copy the vector, tweak if your case differs, paste into the report.
+
+### Web
+| Vulnerability | Score | Vector |
+|---|---|---|
+| SQL injection (unauth, DB dump) | **9.8 Critical** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` |
+| Auth bypass via SQLi to admin | **9.8 Critical** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` |
+| SSTI → RCE | **9.8 Critical** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` |
+| Unrestricted file upload → RCE | **9.8 Critical** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` |
+| Command injection (unauth) | **9.8 Critical** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` |
+| LFI reading sensitive files | **7.5 High** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N` |
+| IDOR — write / account modify | **8.1 High** | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` |
+| IDOR — read only | **6.5 Medium** | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` |
+| Stored XSS | **7.4 High** | `CVSS:3.1/AV:N/AC:L/PR:L/UI:R/S:C/C:H/I:L/A:N` |
+| Reflected XSS | **6.1 Medium** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N` |
+| Missing security headers | **3.7 Low** | `CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N` |
+
+### Network
+| Vulnerability | Score | Vector |
+|---|---|---|
+| Unauth RCE in a network service | **9.8 Critical** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` |
+| Weak/default credentials (SSH/SMB) | **9.8 Critical** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` |
+| Local privilege escalation (SUID/sudo/kernel) | **7.8 High** | `CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` |
+| Anonymous FTP / SMB info disclosure | **5.3 Medium** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N` |
+| SNMP public community exposure | **7.5 High** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N` |
+
+### Active Directory
+| Vulnerability | Score | Vector |
+|---|---|---|
+| Kerberoasting (crackable SPN) | **8.1 High** | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N` |
+| AS-REP roasting (pre-auth disabled) | **8.1 High** | `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N` |
+| DCSync / credential dumping | **9.1 Critical** | `CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:C/C:H/I:H/A:N` |
+| Pass-the-hash lateral movement | **8.8 High** | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` |
+| ACL abuse → privilege escalation | **8.8 High** | `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` |
+
+---
+
+## How to reason about a score in 30 seconds
+
+1. **Can a remote, unauthenticated attacker trigger it and get code execution or full data?** → you're at Critical (9.x). Start there and only come down.
+2. **Does it need the attacker to already have a foothold/account?** → set `PR:L` (or `PR:H`), which pulls the score into High.
+3. **Does it need a victim to click something?** → set `UI:R`, which lowers it a band (why reflected XSS &lt; stored/SQLi).
+4. **Does it escape its own component** (XSS running in the browser affects a different origin/user)? → `S:C` (Changed) bumps it up.
+5. **Which of C/I/A does it actually hit, and how hard?** Read-only leak = `C:H/I:N/A:N`. Full RCE = `C:H/I:H/A:H`.
+
+Don't agonise. A sensible, justified score with the vector pasted scores the CVSS allocation; a blank scores zero. Match one of the rows above and adjust.

