@@ -1,25 +1,34 @@
+---
+title: Write-ups
+sidebarTitle: Overview
+description: Methodology notes from TryHackMe rooms and labs — every command explained, dead ends kept in.
+---
+
 # Write-ups
 
-Methodology notes from rooms and labs.
+Room and lab notes, written the way the PT1 exam wants you to think: every command explained
+flag by flag, each step labelled with its methodology phase, and the wrong turns left in. A clean
+narrative that hides three bad guesses teaches nothing.
 
-> **⚠️ Before publishing a write-up here, decide what's public.**
-> This site is public. Flags, passwords, admin emails, and target IPs are fine to keep in your
-> **private** `.md` notes on disk, but think twice before pushing them to a public page.
-> A good public write-up teaches the **method** (the *why* and the *how*) without necessarily
-> handing out every answer.
+<WriteupIndex />
 
-## Adding a write-up
+## What goes in one
 
-1. Create `pages/writeups/<room-name>.mdx`.
-2. Add it to `pages/writeups/_meta.js` for the sidebar order, e.g.:
+Each write-up follows the same shape, because that shape is the exam's shape:
 
-   ```js
-   export default {
-     index: 'Overview',
-     'grep': 'Grep — OSINT + Web'
-   }
-   ```
+**Recon → Enumeration → Exploitation → Post-exploitation → Reporting.** State which phase you are
+in before each block of commands. On the exam you will be graded on method as much as on flags,
+and the phase label is what turns a list of commands into a method.
 
-3. `git push` → auto-deploys.
+Keep the failed attempts. The moment where a payload should have worked and didn't is the part
+worth re-reading in three weeks — you already know the thing that worked.
 
-_No write-ups published yet._
+## Before you publish one
+
+> This site is public. Flags, passwords, admin emails and target IPs are fine in your private
+> notes on disk; think twice before pushing them to a page anyone can read. A good public
+> write-up teaches the method without handing over every answer.
+
+New write-ups live in `content/writeups/<room-name>/`, with a `_meta.js` beside them for the
+sidebar label. The list above is generated from those files at build time, so there is no index
+to remember to update.

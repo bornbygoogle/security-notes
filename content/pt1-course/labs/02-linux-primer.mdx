@@ -53,7 +53,7 @@ rm file.txt                   # delete a file (no undo — be careful)
 
 > **First-run gotcha you WILL hit:** some lessons save output into a subfolder, e.g. `nmap ... -oN nmap/allports.txt`. If the `nmap/` folder doesn't exist yet, the command errors with *"Failed to open output file."* Fix: make it first. A good habit at the start of each box:
 > ```bash
-> mkdir -p ~/thm/boxname/&#123;nmap,ffuf,loot&#125;
+> mkdir -p ~/thm/boxname/{nmap,ffuf,loot}
 > cd ~/thm/boxname
 > ```
 > Now your output folders exist and everything for this box is in one place (which also becomes your report evidence).

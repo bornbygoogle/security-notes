@@ -1,0 +1,408 @@
+/* ==========================================================================
+   Security Notes — design system
+   --------------------------------------------------------------------------
+   Nextra's theme CSS lives entirely inside @layer theme/base/components/
+   utilities. Unlayered CSS beats layered CSS regardless of specificity, so
+   nothing in this file needs !important. Do not wrap any of it in @layer.
+
+   Three token layers: primitive -> semantic -> component.
+   Only the semantic layer is redefined under .dark.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. PRIMITIVES  raw values, referenced only by the semantic layer
+   -------------------------------------------------------------------------- */
+:root {
+  /* cool grey ramp, blue-shifted so the dark theme reads as an instrument */
+  --ink-950: #0b0e14;
+  --ink-900: #10141c;
+  --ink-850: #151a24;
+  --ink-800: #1a202c;
+  --ink-700: #252c3b;
+  --ink-600: #363e50;
+  --ink-500: #4c5568;
+  --ink-400: #6b7688;
+  --ink-300: #8f99ab;
+  --ink-200: #b4bcc9;
+  --ink-100: #d7dde6;
+  --ink-50:  #edf0f5;
+
+  --paper-50:  #fbfcfd;
+  --paper-100: #f4f6f9;
+  --paper-200: #e8ecf2;
+  --paper-300: #d9dfe8;
+
+  /* accent: cyan-teal, picked by elimination. green is taken by "correct",
+     red/amber by severity. saturation stays under 80%. */
+  --cyan-light: hsl(189 68% 33%);
+  --cyan-dark:  hsl(187 58% 52%);
+
+  /* severity is ordinal, so it gets a sequential intensity ramp rather than
+     a categorical rainbow. no green here, which frees green for "correct". */
+  --sev-critical-d: #ff6369;  --sev-critical-l: #ce2c31;
+  --sev-high-d:     #ff8b3e;  --sev-high-l:     #d2530c;
+  --sev-medium-d:   #f5b944;  --sev-medium-l:   #9e6b00;
+  --sev-low-d:      #c9a227;  --sev-low-l:      #7a6100;
+  --sev-info-d:     #8a94a6;  --sev-info-l:     #5e6878;
+
+  /* one green, one meaning: done correctly */
+  --green-d: #3da35d;
+  --green-l: #2a7f45;
+
+  /* shape: one radius scale, applied everywhere */
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* --------------------------------------------------------------------------
+   2. SEMANTIC  purpose aliases. the only layer that changes with theme.
+   -------------------------------------------------------------------------- */
+:root {
+  --surface:        var(--paper-50);
+  --surface-sunken: var(--paper-100);
+  --surface-raised: #ffffff;
+  --surface-inset:  var(--paper-100);
+
+  --text-primary: var(--ink-900);
+  --text-body:    #303848;
+  --text-muted:   #5d6879;
+  --text-faint:   #8b95a5;
+
+  --accent:        var(--cyan-light);
+  --accent-quiet:  hsl(189 68% 33% / 0.10);
+  --accent-hairline: hsl(189 68% 33% / 0.28);
+
+  --border-hairline: var(--paper-300);
+  --border-strong:   #c3cbd8;
+
+  --success:       var(--green-l);
+  --success-quiet: color-mix(in srgb, var(--green-l) 12%, transparent);
+
+  --sev-critical: var(--sev-critical-l);
+  --sev-high:     var(--sev-high-l);
+  --sev-medium:   var(--sev-medium-l);
+  --sev-low:      var(--sev-low-l);
+  --sev-info:     var(--sev-info-l);
+
+  --focus-ring: var(--accent);
+
+  --shadow-raised: 0 1px 2px rgb(16 20 28 / 0.06), 0 4px 12px rgb(16 20 28 / 0.05);
+  --shadow-lift:   0 2px 4px rgb(16 20 28 / 0.07), 0 12px 28px rgb(16 20 28 / 0.09);
+
+  --grain-opacity: 0.018;
+}
+
+.dark {
+  --surface:        var(--ink-950);
+  --surface-sunken: #080a0f;
+  --surface-raised: var(--ink-850);
+  --surface-inset:  var(--ink-900);
+
+  --text-primary: var(--ink-50);
+  --text-body:    var(--ink-100);
+  --text-muted:   var(--ink-300);
+  --text-faint:   var(--ink-400);
+
+  --accent:        var(--cyan-dark);
+  --accent-quiet:  hsl(187 58% 52% / 0.13);
+  --accent-hairline: hsl(187 58% 52% / 0.32);
+
+  --border-hairline: var(--ink-700);
+  --border-strong:   var(--ink-600);
+
+  --success:       var(--green-d);
+  --success-quiet: color-mix(in srgb, var(--green-d) 16%, transparent);
+
+  --sev-critical: var(--sev-critical-d);
+  --sev-high:     var(--sev-high-d);
+  --sev-medium:   var(--sev-medium-d);
+  --sev-low:      var(--sev-low-d);
+  --sev-info:     var(--sev-info-d);
+
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.3);
+  --shadow-lift:   0 2px 6px rgb(0 0 0 / 0.45), 0 14px 32px rgb(0 0 0 / 0.4);
+
+  --grain-opacity: 0.03;
+}
+
+/* --------------------------------------------------------------------------
+   3. COMPONENT tokens
+   -------------------------------------------------------------------------- */
+:root {
+  --chain-track:      var(--border-hairline);
+  --chain-fill:       var(--accent);
+  --chain-node-idle:  var(--border-strong);
+  --phase-marker-fg:  var(--text-muted);
+  --progress-track:   var(--paper-200);
+  --progress-fill:    var(--success);
+  --scorebar-web:     var(--accent);
+  --scorebar-network: color-mix(in srgb, var(--accent) 62%, var(--text-faint));
+  --scorebar-ad:      color-mix(in srgb, var(--accent) 30%, var(--text-faint));
+  --heat-0:           var(--surface-inset);
+  --scorebar-ink:     var(--paper-50);   /* label drawn on top of a fill */
+  --heat-4:           var(--success);
+  --quiz-correct-bg:  var(--success-quiet);
+  --quiz-wrong-bg:    color-mix(in srgb, var(--sev-critical) 12%, transparent);
+  --card-face-bg:     var(--surface-raised);
+}
+
+.dark {
+  --progress-track: var(--ink-800);
+  /* Must not equal --surface-raised (--ink-850) or the empty heatmap cells
+     vanish into the panel and a zero-progress grid reads as a broken panel. */
+  --heat-0: var(--ink-700);
+  --scorebar-ink: var(--ink-950);
+}
+
+/* --------------------------------------------------------------------------
+   4. BASE  typography and page shell
+   -------------------------------------------------------------------------- */
+:root {
+  --nextra-content-width: 88rem;
+  --measure: 55ch;   /* ~71 characters in Geist, verified in-browser */
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  color: var(--text-body);
+  font-size: 16.5px;
+  line-height: 1.7;
+  letter-spacing: -0.003em;
+}
+
+code, kbd, samp, pre, .mono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-feature-settings: "ss01", "zero";
+}
+
+/* grain kills the flatness that makes stock docs themes look cheap.
+   fixed + pointer-events-none so it never repaints on scroll. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* --- headings: hierarchy by weight and rule, not by raw scale ------------- */
+:where(main[data-pagefind-body]) h1 {
+  font-size: 2.25rem;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--text-primary);
+  margin-bottom: 0.6rem;
+}
+
+/* `---` before a heading duplicates the rule the heading already draws */
+:where(main[data-pagefind-body]) hr:has(+ h2),
+:where(main[data-pagefind-body]) hr:has(+ h3) { display: none; }
+
+:where(main[data-pagefind-body]) hr {
+  border: none;
+  border-top: 1px solid var(--border-hairline);
+  margin-block: 2.5rem;
+  max-width: var(--measure);
+}
+
+:where(main[data-pagefind-body]) h2 {
+  font-size: 1.5rem;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: -0.017em;
+  color: var(--text-primary);
+  margin-top: 3rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--border-hairline);
+}
+
+:where(main[data-pagefind-body]) h3 {
+  font-size: 1.175rem;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--text-primary);
+  margin-top: 2.2rem;
+}
+
+:where(main[data-pagefind-body]) h4 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 1.8rem;
+}
+
+/* --- prose reads narrow, evidence reads wide ----------------------------- */
+:where(main[data-pagefind-body]) > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+  max-width: var(--measure);
+}
+:where(main[data-pagefind-body]) :is(pre, table) { max-width: none; }
+
+:where(main[data-pagefind-body]) p { margin-block: 1.1em; }
+:where(main[data-pagefind-body]) :is(ul, ol) { margin-block: 1.1em; }
+:where(main[data-pagefind-body]) li { margin-block: 0.4em; }
+
+:where(main[data-pagefind-body]) a {
+  color: var(--accent);
+  text-decoration-color: var(--accent-hairline);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.15s var(--ease);
+}
+:where(main[data-pagefind-body]) a:hover { text-decoration-color: var(--accent); }
+
+:where(main[data-pagefind-body]) strong { color: var(--text-primary); font-weight: 600; }
+
+/* --- inline code and blocks ---------------------------------------------- */
+:where(main[data-pagefind-body]) :not(pre) > code {
+  background: var(--surface-inset);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-sm);
+  padding: 0.12em 0.36em;
+  font-size: 0.855em;
+  color: var(--text-primary);
+}
+
+:where(main[data-pagefind-body]) pre {
+  background: var(--surface-inset) !important;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-md);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
+/* --- blockquotes: used throughout as teaching notes ---------------------- */
+:where(main[data-pagefind-body]) blockquote {
+  border-inline-start: 2px solid var(--accent-hairline);
+  background: var(--accent-quiet);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  padding: 0.85rem 1.1rem;
+  color: var(--text-body);
+  font-style: normal;
+}
+:where(main[data-pagefind-body]) blockquote p:first-child { margin-top: 0; }
+:where(main[data-pagefind-body]) blockquote p:last-child { margin-bottom: 0; }
+
+/* --- tables: the content is table-heavy, so they matter ------------------ */
+:where(main[data-pagefind-body]) table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.925rem;
+  margin-block: 1.6rem;
+}
+:where(main[data-pagefind-body]) :is(th, td) {
+  border: none;
+  border-bottom: 1px solid var(--border-hairline);
+  padding: 0.6rem 0.9rem;
+  text-align: start;
+  vertical-align: top;
+}
+:where(main[data-pagefind-body]) th {
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  border-bottom-color: var(--border-strong);
+  white-space: nowrap;
+}
+:where(main[data-pagefind-body]) tbody tr { transition: background 0.12s var(--ease); }
+:where(main[data-pagefind-body]) tbody tr:hover { background: var(--surface-inset); }
+
+/* --- details: 16 lesson files use these for solutions -------------------- */
+:where(main[data-pagefind-body]) details {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-lg);
+  background: var(--surface-raised);
+  padding: 0;
+  margin-block: 1.6rem;
+  overflow: hidden;
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+:where(main[data-pagefind-body]) details:hover { border-color: var(--border-strong); }
+:where(main[data-pagefind-body]) details[open] {
+  border-color: var(--accent-hairline);
+  box-shadow: var(--shadow-raised);
+}
+:where(main[data-pagefind-body]) summary {
+  cursor: pointer;
+  padding: 0.9rem 1.15rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  user-select: none;
+}
+:where(main[data-pagefind-body]) summary::-webkit-details-marker { display: none; }
+
+/* style Nextra's own chevron rather than adding a second one */
+:where(main[data-pagefind-body]) summary > svg {
+  width: 0.95rem; height: 0.95rem;
+  color: var(--accent);
+  flex: none;
+  transition: transform 0.22s var(--ease);
+}
+
+/* Nextra promotes the summary's <b> to an <h3>; keep it summary-sized */
+:where(main[data-pagefind-body]) summary > :is(h3, h4, p) {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0;
+  padding: 0;
+  border: none;
+  color: inherit;
+  letter-spacing: 0;
+}
+:where(main[data-pagefind-body]) details[open] summary {
+  border-bottom: 1px solid var(--border-hairline);
+  background: var(--surface-inset);
+}
+:where(main[data-pagefind-body]) details > :not(summary) { padding-inline: 1.15rem; }
+:where(main[data-pagefind-body]) details > :not(summary):last-child { padding-bottom: 0.6rem; }
+
+/* --- focus: visible everywhere, never removed ---------------------------- */
+:where(a, button, summary, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* --------------------------------------------------------------------------
+   5. MOTION  transform/opacity only, all of it optional
+   -------------------------------------------------------------------------- */
+@keyframes sn-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.sn-rise {
+  animation: sn-rise 0.55s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .sn-rise { animation: none; opacity: 1; transform: none; }
+}

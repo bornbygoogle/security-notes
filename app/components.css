@@ -1,0 +1,1103 @@
+/* ==========================================================================
+   Security Notes — component styles (practice + lesson chrome)
+   Unlayered, same as globals.css. transform/opacity only for motion.
+   ========================================================================== */
+
+.sn-h {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  color: var(--text-faint);
+  margin: 0;
+  border: none;
+  padding: 0;
+}
+
+.sn-dot {
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.45;
+  flex: none;
+}
+
+/* -------------------------------------------------------------------------
+   Dashboard shell
+   ------------------------------------------------------------------------- */
+.sn-dash { display: grid; gap: 1.15rem; margin-top: -0.5rem; }
+
+.sn-dash__head { padding-bottom: 0.35rem; }
+
+.sn-eyebrow {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: 0.7rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.11em;
+  color: var(--accent);
+  margin: 0 0 0.6rem;
+}
+
+.sn-dash__title {
+  font-size: clamp(2rem, 4.4vw, 2.7rem);
+  line-height: 1.08;
+  font-weight: 600;
+  letter-spacing: -0.032em;
+  color: var(--text-primary);
+  margin: 0 0 0.55rem;
+}
+
+.sn-dash__lede {
+  max-width: 56ch;
+  color: var(--text-muted);
+  font-size: 1.01rem;
+  margin: 0 0 1.5rem;
+}
+
+.sn-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  background: var(--border-hairline);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin: 0;
+}
+.sn-stats > div { background: var(--surface); padding: 0.8rem 1rem; }
+.sn-stats dt {
+  font-size: 0.7rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.075em;
+  color: var(--text-faint);
+  margin-bottom: 0.25rem;
+}
+.sn-stats dd {
+  margin: 0;
+  font-size: 0.94rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.sn-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-xl);
+  padding: 1.25rem 1.35rem 1.35rem;
+  box-shadow: var(--shadow-raised);
+}
+.sn-panel__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap; margin-bottom: 1.15rem;
+}
+.sn-panel__note { margin: 0; font-size: 0.83rem; color: var(--text-faint); }
+
+.sn-split { display: grid; gap: 1.15rem; }
+@media (min-width: 900px) {
+  /* stretch, not start: a short panel beside a tall one should fill its cell
+     and space its own content out, rather than leave a hole under itself. */
+  .sn-split { grid-template-columns: 1.15fr 1fr; align-items: stretch; }
+  .sn-split--heat { grid-template-columns: auto 1fr; }
+}
+.sn-split > .sn-panel { display: flex; flex-direction: column; }
+/* The one direct child of each panel is the section that owns the content, so
+   the distribution has to happen on it, not on the panel. */
+.sn-split > .sn-panel > * { flex: 1 1 auto; }
+/* Head and bar sit at the top in normal flow; only the closing note takes the
+   slack (see the auto top margins on .sn-score__strategy / .sn-heat__legend).
+   Spreading all three children instead strands the bar in mid-air. */
+.sn-score,
+.sn-heat,
+.sn-modules { display: flex; flex-direction: column; }
+/* A list of rows can absorb slack by spacing its rows out — that reads as
+   deliberate, where a gap under the last row reads as a hole. */
+.sn-modules__list { flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
+
+/* -------------------------------------------------------------------------
+   Attack chain
+   ------------------------------------------------------------------------- */
+.sn-chain {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  list-style: none;
+  margin: 0; padding: 0;
+}
+@media (max-width: 620px) {
+  .sn-chain { grid-template-columns: 1fr 1fr; row-gap: 1.1rem; }
+}
+
+.sn-chain__step { min-width: 0; }
+
+.sn-chain__rail {
+  display: flex; align-items: center; gap: 0;
+  margin-bottom: 0.6rem;
+}
+
+.sn-chain__node {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--surface);
+  border: 2px solid var(--chain-node-idle);
+  transition: border-color 0.4s var(--ease), background 0.4s var(--ease),
+              box-shadow 0.4s var(--ease);
+}
+
+.sn-chain__track {
+  flex: 1;
+  height: 2px;
+  background: var(--chain-track);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-inline-start: 2px;
+}
+
+.sn-chain__fill {
+  display: block;
+  height: 100%;
+  width: var(--pct, 0%);
+  background: var(--chain-fill);
+  border-radius: 2px;
+  transform-origin: left center;
+  transition: width 0.9s var(--ease);
+  transition-delay: calc(var(--i, 0) * 110ms + 180ms);
+}
+
+.sn-chain__step.is-complete .sn-chain__node {
+  border-color: var(--success);
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-quiet);
+}
+.sn-chain__step.is-active .sn-chain__node {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-quiet);
+}
+
+.sn-chain__body { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+
+.sn-chain__label {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  font-size: 0.775rem;
+  font-weight: 500;
+  color: var(--phase-marker-fg);
+  letter-spacing: -0.005em;
+}
+.sn-chain__step.is-active .sn-chain__label { color: var(--text-primary); font-weight: 600; }
+
+.sn-chain__count { font-size: 0.75rem; color: var(--text-faint); }
+
+.sn-chain.is-compact .sn-chain__label { font-size: 0.71rem; }
+.sn-chain.is-compact .sn-chain__node { width: 9px; height: 9px; }
+.sn-chain.is-static .sn-chain__track { background: var(--chain-track); }
+.sn-chain.is-static .sn-chain__step.is-active ~ .sn-chain__step .sn-chain__node { opacity: 0.5; }
+
+/* -------------------------------------------------------------------------
+   Score bar
+   ------------------------------------------------------------------------- */
+.sn-score__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; margin-bottom: 1.1rem;
+}
+.sn-score__proj { margin: 0; font-size: 0.8rem; color: var(--text-faint); }
+.sn-score__proj strong {
+  font-size: 1.15rem; font-weight: 600; color: var(--text-primary);
+  transition: color 0.4s var(--ease);
+}
+.sn-score__proj strong.is-passing { color: var(--success); }
+
+.sn-score__bar {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  height: 40px;
+  margin-bottom: 1.9rem;
+}
+
+.sn-score__seg {
+  width: var(--w);
+  background: var(--progress-track);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  position: relative;
+  display: flex; align-items: center;
+  box-shadow: inset 0 0 0 1px var(--border-hairline);
+}
+.sn-score__seg::after {
+  content: attr(data-label);
+  position: relative;
+  z-index: 1;
+  padding-inline: 0.5rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  mix-blend-mode: normal;
+}
+.sn-score__earned {
+  position: absolute; inset-block: 0; inset-inline-start: 0;
+  width: var(--pct, 0%);
+  overflow: hidden;
+  z-index: 2;                     /* above the segment's own label */
+  transition: width 1s var(--ease) 0.25s;
+}
+/* Second copy of the label, clipped to exactly the filled width and drawn in
+   a colour that reads on the fill. Positioned from the segment's left edge
+   with the same padding, so the two copies line up glyph for glyph. */
+.sn-score__earned::after {
+  content: var(--label, "");
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  display: flex;
+  align-items: center;
+  padding-inline: 0.5rem;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--scorebar-ink);
+  white-space: nowrap;
+}
+.sn-score__seg--web .sn-score__earned { background: var(--scorebar-web); }
+.sn-score__seg--network .sn-score__earned { background: var(--scorebar-network); }
+.sn-score__seg--active-directory .sn-score__earned { background: var(--scorebar-ad); }
+
+.sn-score__mark {
+  position: absolute;
+  inset-block: -5px -6px;
+  inset-inline-start: var(--at);
+  width: 2px;
+  background: var(--text-primary);
+  opacity: 0.55;
+  border-radius: 2px;
+  transition: background 0.4s var(--ease), opacity 0.4s var(--ease);
+}
+.sn-score__mark.is-cleared { background: var(--success); opacity: 1; }
+.sn-score__mark-label {
+  position: absolute;
+  top: calc(100% + 5px);
+  inset-inline-start: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+
+/* -------------------------------------------------------------------------
+   Module list
+   ------------------------------------------------------------------------- */
+.sn-modules__list { list-style: none; margin: 0.9rem 0 0; padding: 0; }
+
+.sn-mod + .sn-mod { border-top: 1px solid var(--border-hairline); }
+
+.sn-mod__link {
+  display: grid;
+  grid-template-columns: 1fr 84px auto;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.6rem 0.15rem;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--r-sm);
+  transition: color 0.15s var(--ease);
+}
+.sn-mod__link:hover { color: var(--text-primary); }
+.sn-mod__link:hover .sn-mod__name { color: var(--accent); }
+
+.sn-mod__name {
+  font-size: 0.9rem; font-weight: 500; color: var(--text-body);
+  transition: color 0.15s var(--ease);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.sn-mod__meter {
+  height: 5px;
+  background: var(--progress-track);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.sn-mod__fill {
+  display: block; height: 100%;
+  width: var(--pct, 0%);
+  background: var(--progress-fill);
+  border-radius: 3px;
+  transition: width 0.85s var(--ease);
+  transition-delay: calc(var(--i, 0) * 80ms + 200ms);
+}
+.sn-mod__count { font-size: 0.75rem; color: var(--text-faint); min-width: 2.4rem; text-align: end; }
+
+.sn-mod.is-current .sn-mod__name { color: var(--text-primary); font-weight: 600; }
+
+.sn-mod__resume {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  margin: 0.1rem 0 0.6rem;
+  font-size: 0.8rem; font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+}
+.sn-mod__resume:hover { text-decoration: underline; text-underline-offset: 3px; }
+.sn-mod__resume svg { transition: transform 0.2s var(--ease); }
+.sn-mod__resume:hover svg { transform: translateX(2px); }
+
+/* -------------------------------------------------------------------------
+   Study heatmap
+   ------------------------------------------------------------------------- */
+.sn-heat__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1.5rem; margin-bottom: 0.9rem;
+}
+.sn-heat__stat { font-size: 0.78rem; color: var(--text-faint); }
+
+.sn-heat__grid {
+  display: grid;
+  grid-template-rows: repeat(7, 13px);
+  grid-auto-flow: column;
+  grid-auto-columns: 13px;
+  gap: 3px;
+  justify-content: start;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.sn-heat__cell {
+  width: 13px; height: 13px;
+  border-radius: 3px;
+  background: var(--heat-0);
+  border: 1px solid transparent;
+  transition: transform 0.15s var(--ease);
+}
+.sn-heat__cell:hover { transform: scale(1.35); }
+.sn-heat__cell[data-level="1"] { background: color-mix(in srgb, var(--heat-4) 32%, var(--heat-0)); }
+.sn-heat__cell[data-level="2"] { background: color-mix(in srgb, var(--heat-4) 55%, var(--heat-0)); }
+.sn-heat__cell[data-level="3"] { background: color-mix(in srgb, var(--heat-4) 78%, var(--heat-0)); }
+.sn-heat__cell[data-level="4"] { background: var(--heat-4); }
+
+.sn-heat__legend {
+  display: flex; justify-content: space-between;
+  max-width: 285px;
+  font-size: 0.68rem; color: var(--text-faint);
+  margin: auto 0 0;
+  padding-top: 0.6rem;   /* auto collapses to 0 when there is no slack */
+}
+
+/* -------------------------------------------------------------------------
+   Buttons and the drill strip
+   ------------------------------------------------------------------------- */
+.sn-btn {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.55rem 0.95rem;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.87rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 0.12s var(--ease), border-color 0.15s var(--ease),
+              background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.sn-btn:hover { border-color: var(--accent); color: var(--accent); }
+.sn-btn:active { transform: translateY(1px); }
+
+.sn-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface);
+  font-weight: 600;
+}
+.dark .sn-btn--primary { color: var(--ink-950); }
+.sn-btn--primary:hover {
+  color: var(--surface);
+  filter: brightness(1.08);
+  border-color: var(--accent);
+}
+.dark .sn-btn--primary:hover { color: var(--ink-950); }
+
+.sn-btn--complete.is-done {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--success-quiet);
+}
+
+.sn-drill {
+  display: flex; flex-direction: column; align-items: flex-start;
+  justify-content: center;
+  gap: 1.1rem;
+  height: 100%;
+  padding: 1.25rem 1.35rem;
+  border: 1px solid var(--accent-hairline);
+  background: var(--accent-quiet);
+  border-radius: var(--r-xl);
+}
+.sn-drill__text { display: flex; align-items: flex-start; gap: 0.75rem; color: var(--accent); }
+.sn-drill__lead { margin: 0; font-size: 0.92rem; font-weight: 600; color: var(--text-primary); }
+.sn-drill__sub { margin: 0.15rem 0 0; font-size: 0.83rem; color: var(--text-muted); max-width: 46ch; }
+
+/* -------------------------------------------------------------------------
+   Lesson chrome
+   ------------------------------------------------------------------------- */
+.sn-lessonhead {
+  margin: 0 0 1.9rem;
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.sn-lessonhead__meta {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  color: var(--text-faint);
+  margin: 0 0 1rem;
+}
+.sn-lessonhead__phase {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+.sn-lessonhead__time { display: inline-flex; align-items: center; gap: 0.3rem; }
+
+.sn-lessonhead .sn-chain { max-width: 46rem; }
+
+.sn-lessonfoot > .sn-btn { justify-self: start; }
+
+.sn-lessonfoot {
+  margin-top: 3.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-hairline);
+  display: grid;
+  gap: 1.5rem;
+}
+
+.sn-lessonnav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+@media (max-width: 560px) { .sn-lessonnav { grid-template-columns: 1fr; } }
+
+.sn-lessonnav__link {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-lg);
+  color: var(--text-body);
+  text-decoration: none;
+  transition: border-color 0.15s var(--ease), transform 0.15s var(--ease);
+}
+.sn-lessonnav__link:hover { border-color: var(--accent); transform: translateY(-1px); }
+.sn-lessonnav__link.is-next { justify-content: flex-end; text-align: end; }
+.sn-lessonnav__link > span { display: grid; gap: 0.1rem; min-width: 0; }
+.sn-lessonnav__dir {
+  font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--text-faint);
+}
+.sn-lessonnav__title {
+  font-size: 0.88rem; font-weight: 500; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------------
+   Reduced motion
+   ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .sn-chain__fill, .sn-mod__fill, .sn-score__earned {
+    transition: none !important;
+  }
+  .sn-heat__cell:hover, .sn-lessonnav__link:hover { transform: none; }
+}
+
+/* -------------------------------------------------------------------------
+   Navbar identity and footer
+   ------------------------------------------------------------------------- */
+.sn-logo {
+  display: inline-flex; align-items: center; gap: 0.55rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  letter-spacing: -0.014em;
+  color: var(--text-primary);
+}
+.sn-logo__mark {
+  width: 15px; height: 17px;
+  flex: none;
+  background: var(--accent);
+  /* shield silhouette, drawn as a clip path so it inherits the accent token
+     and needs no asset or icon import */
+  clip-path: polygon(50% 0%, 100% 20%, 100% 55%, 50% 100%, 0% 55%, 0% 20%);
+}
+
+.sn-foot { font-size: 0.76rem; color: var(--text-faint); letter-spacing: 0.01em; }
+
+.sn-score__strategy {
+  /* auto top margin anchors the note to the bottom when the panel is
+     stretched to match a taller neighbour; the padding keeps it off the gap
+     line above once the content fills and the auto collapses to 0. */
+  margin: auto 0 0;
+  padding-top: 0.55rem;
+  font-size: 0.83rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 44ch;
+}
+
+/* ── Flag tooltips ──────────────────────────────────────────────────────
+   Decorated in components/flag-tips.jsx. The button inherits the Shiki
+   token colour, so a flag keeps its syntax highlighting and only gains a
+   dotted rule — the "there is more here" affordance, not a second colour. */
+.sn-flag {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: help;
+  border-bottom: 1px dotted currentColor;
+  opacity: .999; /* own stacking context so the underline never doubles */
+  border-radius: 2px;
+  transition: background-color .12s var(--ease), box-shadow .12s var(--ease);
+}
+.sn-flag:hover,
+.sn-flag[aria-describedby] {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 16%, transparent);
+  border-bottom-style: solid;
+}
+.sn-flag:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sn-tip {
+  position: fixed;
+  z-index: 70;
+  max-width: min(30rem, calc(100vw - 2rem));
+  display: grid;
+  gap: .3rem;
+  padding: .6rem .75rem .65rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lift);
+  opacity: 0;
+  transform: translateY(3px) scale(.985);
+  transition: opacity .13s var(--ease), transform .13s var(--ease);
+  pointer-events: none;
+}
+.sn-tip.is-open { opacity: 1; transform: none; }
+.sn-tip::after {
+  content: '';
+  position: absolute;
+  left: var(--arrow-x, 50%);
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  transform: rotate(45deg);
+}
+.sn-tip[data-side='top']::after  { bottom: -5px; border-top: 0; border-left: 0; }
+.sn-tip[data-side='bottom']::after { top: -5px; border-bottom: 0; border-right: 0; }
+.sn-tip__flag {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: .78rem;
+  font-weight: 600;
+  letter-spacing: .01em;
+  color: var(--accent);
+}
+.sn-tip__text {
+  font-size: .855rem;
+  line-height: 1.55;
+  color: var(--text-body);
+  text-wrap: pretty;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sn-tip { transition: none; transform: none; }
+  .sn-flag { transition: none; }
+}
+
+/* ══ Drill ══════════════════════════════════════════════════════════════
+   The practice surface. Deliberately louder than a lesson page: a real 3D
+   flip, a live progress bar, colour on the verdict buttons. Study pages stay
+   quiet so this one can carry the energy. */
+.sn-drillpage {
+  display: grid;
+  gap: 1.5rem;
+  padding-block: .5rem 2rem;
+  /* Narrower than a lesson page on purpose: a drill is one thing at a time,
+     and a 1400px-wide flashcard is a worse flashcard. */
+  max-width: 54rem;
+}
+.sn-drillpage .sn-dash__lede { max-width: 62ch; }
+.sn-stats__of { color: var(--text-faint); font-weight: 400; font-size: .8em; }
+
+/* Box ladder */
+.sn-boxes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: .5rem;
+  align-items: end;
+}
+.sn-box {
+  display: grid;
+  grid-template-rows: 74px auto auto;
+  gap: .35rem;
+  align-items: end;
+  text-align: center;
+  min-width: 0;
+}
+.sn-box__bar {
+  align-self: end;
+  height: max(3px, var(--h));
+  border-radius: 3px 3px 1px 1px;
+  background: color-mix(in srgb, var(--accent) calc(24% + var(--box-w, 0) * 1%), var(--progress-track));
+  transition: height .5s var(--ease);
+}
+.sn-box[data-box='1'] .sn-box__bar { --box-w: 0; }
+.sn-box[data-box='2'] .sn-box__bar { --box-w: 16; }
+.sn-box[data-box='3'] .sn-box__bar { --box-w: 32; }
+.sn-box[data-box='4'] .sn-box__bar { --box-w: 50; }
+.sn-box[data-box='5'] .sn-box__bar { background: var(--success); }
+.sn-box--new .sn-box__bar {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--progress-track) 0 4px,
+    transparent 4px 8px
+  );
+  box-shadow: inset 0 0 0 1px var(--border-hairline);
+}
+/* The unseen pile is not a box on the ladder — separate it. */
+.sn-box--new { border-left: 1px solid var(--border-hairline); padding-left: .5rem; }
+.sn-box__n {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.sn-box__label {
+  display: grid;
+  font-size: .68rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.sn-box__int { font-size: .64rem; color: var(--text-faint); opacity: .8; }
+
+/* Deck chips */
+.sn-chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.sn-chip {
+  font: inherit;
+  font-size: .8rem;
+  display: inline-flex;
+  align-items: baseline;
+  gap: .4rem;
+  padding: .3rem .6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-sunken);
+  color: var(--text-body);
+  cursor: pointer;
+  transition: background-color .14s var(--ease), border-color .14s var(--ease), color .14s var(--ease);
+}
+.sn-chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.sn-chip[aria-pressed='true'] {
+  background: var(--accent-quiet);
+  border-color: var(--accent-hairline);
+  color: var(--accent);
+  font-weight: 550;
+}
+.sn-chip__n {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: .7rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.sn-chip[aria-pressed='true'] .sn-chip__n { color: var(--accent); opacity: .75; }
+
+/* Card */
+.sn-panel--card { display: grid; gap: 1rem; align-content: center; }
+.sn-drillbar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--progress-track);
+  overflow: hidden;
+}
+.sn-drillbar > span {
+  display: block;
+  height: 100%;
+  width: var(--pct, 0%);
+  background: var(--accent);
+  transition: width .4s var(--ease);
+}
+
+.sn-card { perspective: 1400px; cursor: pointer; }
+.sn-card__inner {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform .5s var(--ease);
+  min-height: 12rem;
+}
+.sn-card.is-flipped .sn-card__inner { transform: rotateX(180deg); }
+.sn-card__face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  display: grid;
+  gap: .75rem;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  padding: 1.75rem 1.5rem;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-hairline);
+  background: var(--card-face-bg);
+  box-shadow: var(--shadow-raised);
+}
+.sn-card__face--back { transform: rotateX(180deg); }
+.sn-card__section {
+  font-size: .68rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0;
+}
+.sn-card__term {
+  font-size: clamp(1.35rem, 3.2vw, 1.9rem);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+  margin: 0;
+  text-wrap: balance;
+}
+.sn-card__term.mono { font-family: var(--font-geist-mono), ui-monospace, monospace; font-size: 1.35rem; }
+.sn-card__def {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--text-body);
+  margin: 0;
+  max-width: 46ch;
+  text-wrap: pretty;
+}
+.sn-card__def code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: .88em;
+  background: var(--surface-inset);
+  padding: .1em .3em;
+  border-radius: 3px;
+}
+
+/* Verdict row */
+.sn-verdict { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: center; align-items: center; min-height: 2.4rem; }
+.sn-verdict__hint { font-size: .85rem; color: var(--text-muted); margin: 0; text-align: center; max-width: 44ch; }
+.sn-btn--again, .sn-btn--got { font-weight: 550; }
+.sn-btn--again { border-color: color-mix(in srgb, var(--sev-high) 45%, transparent); color: var(--sev-high); }
+.sn-btn--again:hover { background: color-mix(in srgb, var(--sev-high) 12%, transparent); }
+.sn-btn--got { border-color: color-mix(in srgb, var(--success) 50%, transparent); color: var(--success); }
+.sn-btn--got:hover { background: var(--success-quiet); }
+.sn-verdict kbd, .sn-keys kbd {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: .68rem;
+  padding: .05rem .3rem;
+  border-radius: 3px;
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-inset);
+  color: var(--text-faint);
+  margin-left: .35rem;
+}
+.sn-keys { font-size: .78rem; color: var(--text-faint); margin: 0; }
+.sn-keys kbd { margin: 0 .1rem; }
+
+.sn-drillstart { display: grid; gap: .9rem; justify-items: center; text-align: center; }
+.sn-drillstart__lede { margin: 0; color: var(--text-body); max-width: 48ch; text-wrap: pretty; }
+
+.sn-drilldone { display: grid; gap: .75rem; justify-items: center; text-align: center; }
+.sn-drilldone__score {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 2.6rem;
+  font-weight: 600;
+  color: var(--success);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.sn-drilldone__score span { font-size: 1.2rem; color: var(--text-faint); font-weight: 400; }
+.sn-drilldone__text { margin: 0; color: var(--text-body); max-width: 46ch; text-wrap: pretty; }
+
+@media (max-width: 640px) {
+  .sn-boxes { grid-template-columns: repeat(3, 1fr); row-gap: 1rem; }
+  .sn-card__inner { min-height: 14rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sn-card__inner { transition: none; }
+  .sn-card.is-flipped .sn-card__inner { transform: none; }
+  .sn-card__face { backface-visibility: visible; position: static; }
+  .sn-card__face--front { display: none; }
+  .sn-card:not(.is-flipped) .sn-card__face--front { display: grid; }
+  .sn-card:not(.is-flipped) .sn-card__face--back { display: none; }
+  .sn-card__face--back { transform: none; }
+  .sn-box__bar, .sn-drillbar > span { transition: none; }
+}
+
+/* ══ Lesson self-check ══════════════════════════════════════════════════
+   Injected by the MDX wrapper after the lesson body — no content file was
+   edited to get a quiz onto a page. */
+.sn-quiz {
+  margin-block: 3rem 1rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--border-hairline);
+  display: grid;
+  gap: 1.25rem;
+}
+.sn-quiz__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem 1.5rem;
+  align-items: end;
+  justify-content: space-between;
+}
+.sn-quiz__head .sn-h { margin: 0; padding: 0; border: 0; }
+.sn-quiz__score { display: flex; align-items: baseline; gap: .6rem; margin: 0; }
+.sn-quiz__now {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.sn-quiz__now span { font-size: .8rem; color: var(--text-faint); font-weight: 400; }
+.sn-quiz__best {
+  font-size: .7rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--success);
+  background: var(--success-quiet);
+  padding: .15rem .4rem;
+  border-radius: 999px;
+}
+
+.sn-quiz__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.sn-q {
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-lg);
+  padding: 1.1rem 1.2rem;
+  background: var(--surface-sunken);
+  transition: border-color .2s var(--ease), background-color .2s var(--ease);
+}
+.sn-q[data-state='right'] { border-color: color-mix(in srgb, var(--success) 40%, transparent); }
+.sn-q[data-state='wrong'] { border-color: color-mix(in srgb, var(--sev-high) 40%, transparent); }
+.sn-q__set { border: 0; margin: 0; padding: 0; min-width: 0; }
+.sn-q__text {
+  font-size: .98rem;
+  font-weight: 550;
+  line-height: 1.5;
+  color: var(--text-primary);
+  padding: 0;
+  margin-bottom: .75rem;
+  text-wrap: pretty;
+}
+.sn-q__options { display: grid; gap: .35rem; }
+
+.sn-opt {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .6rem;
+  align-items: start;
+  padding: .5rem .65rem;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: .9rem;
+  line-height: 1.5;
+  color: var(--text-body);
+  transition: background-color .14s var(--ease), border-color .14s var(--ease), color .14s var(--ease);
+}
+.sn-opt input { position: absolute; opacity: 0; width: 0; height: 0; }
+.sn-opt__mark {
+  width: 15px;
+  height: 15px;
+  margin-top: .18rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  transition: border-color .14s var(--ease), background-color .14s var(--ease);
+}
+.sn-opt__mark::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background-color .14s var(--ease);
+}
+.sn-opt[data-state='open']:hover { background: var(--surface-inset); border-color: var(--border-hairline); }
+.sn-opt[data-state='open']:hover .sn-opt__mark { border-color: var(--accent); }
+.sn-opt:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.sn-opt[data-state='answer'] {
+  background: var(--success-quiet);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  color: var(--text-primary);
+  font-weight: 550;
+}
+.sn-opt[data-state='answer'] .sn-opt__mark { border-color: var(--success); }
+.sn-opt[data-state='answer'] .sn-opt__mark::after { background: var(--success); }
+.sn-opt[data-state='picked-wrong'] {
+  background: color-mix(in srgb, var(--sev-high) 10%, transparent);
+  border-color: color-mix(in srgb, var(--sev-high) 45%, transparent);
+  color: var(--text-primary);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--sev-high) 60%, transparent);
+}
+.sn-opt[data-state='picked-wrong'] .sn-opt__mark { border-color: var(--sev-high); }
+.sn-opt[data-state='picked-wrong'] .sn-opt__mark::after { background: var(--sev-high); }
+.sn-opt[data-state='muted'] { color: var(--text-faint); }
+
+.sn-q__why {
+  margin: .8rem 0 0;
+  padding-top: .8rem;
+  border-top: 1px dashed var(--border-hairline);
+  font-size: .88rem;
+  line-height: 1.6;
+  color: var(--text-body);
+  text-wrap: pretty;
+  animation: sn-rise .3s var(--ease) both;
+}
+.sn-q__why strong { color: var(--text-primary); }
+.sn-q[data-state='right'] .sn-q__why strong { color: var(--success); }
+.sn-q[data-state='wrong'] .sn-q__why strong { color: var(--sev-high); }
+
+.sn-quiz__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .9rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.15rem;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border-hairline);
+  background: var(--surface-sunken);
+}
+.sn-quiz__foot[data-passed='true'] {
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  background: var(--success-quiet);
+}
+.sn-quiz__verdict { margin: 0; font-size: .92rem; line-height: 1.6; color: var(--text-body); max-width: 58ch; }
+.sn-quiz__verdict strong {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sn-q, .sn-opt, .sn-opt__mark, .sn-opt__mark::after { transition: none; }
+  .sn-q__why { animation: none; }
+}
+
+/* Inline code inside injected UI (quiz, drill) — these are plain <code>
+   elements from components/rich-text.jsx, not Nextra's MDX code nodes. */
+.sn-q__text code,
+.sn-opt__text code,
+.sn-q__why code,
+.sn-quiz__verdict code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: .88em;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-hairline);
+  padding: .05em .32em;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.sn-opt[data-state='picked-wrong'] .sn-opt__text code { text-decoration: line-through; }
+
+/* ══ Write-ups index ════════════════════════════════════════════════════
+   A typographic list, not a card grid. Three items do not need cards, and
+   what a reader scans for is the title and what it teaches. */
+.sn-wlist { list-style: none; margin: 1.5rem 0 2.5rem; padding: 0; display: grid; gap: 0; }
+.sn-w {
+  padding: 1.25rem 0;
+  border-top: 1px solid var(--border-hairline);
+  display: grid;
+  gap: .4rem;
+}
+.sn-w:last-child { border-bottom: 1px solid var(--border-hairline); }
+.sn-w__link { text-decoration: none; }
+.sn-w__title {
+  font-size: 1.08rem;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: var(--text-primary);
+  text-wrap: balance;
+  transition: color .14s var(--ease);
+}
+.sn-w__link:hover .sn-w__title { color: var(--accent); }
+.sn-w__sum {
+  margin: 0;
+  font-size: .92rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+.sn-w__meta { margin: .15rem 0 0; display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.sn-w__phase {
+  font-size: .67rem;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-quiet);
+  border: 1px solid var(--accent-hairline);
+  padding: .1rem .4rem;
+  border-radius: 3px;
+}
+.sn-w__words {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: .68rem;
+  color: var(--text-faint);
+  margin-left: .3rem;
+}
+
+/* Per-domain numbers under the exam-weight bar. The bar gives proportion at a
+   glance; these give the figures you actually plan against. */
+.sn-score__rows { list-style: none; margin: 1.25rem 0 0; padding: 0; display: grid; gap: 0; }
+.sn-score__rows li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0 1rem;
+  align-items: baseline;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border-hairline);
+}
+.sn-score__rows li:first-child { border-top: 0; }
+.sn-score__dom { font-size: 0.9rem; color: var(--text-primary); font-weight: 500; }
+.sn-score__lessons { font-size: 0.72rem; color: var(--text-faint); }
+.sn-score__pts {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  min-width: 5.5ch;
+  text-align: right;
+}
+.sn-score__pts em { font-style: normal; color: var(--text-faint); font-size: 0.78em; }
+.sn-score__gap {
+  margin: 0.75rem 0 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}

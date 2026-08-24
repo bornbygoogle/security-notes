@@ -25,7 +25,7 @@ Each layer feeds the next. Skipping a layer is how you miss the foothold.
 
 > **Do this first, or command #1 errors.** The scans below save into a `nmap/` folder that doesn't exist yet — nmap will fail with *"Failed to open output file."* Make your working folders before you start (see `labs/02`):
 > ```bash
-> mkdir -p ~/thm/boxname/&#123;nmap,ffuf&#125; && cd ~/thm/boxname
+> mkdir -p ~/thm/boxname/{nmap,ffuf} && cd ~/thm/boxname
 > ```
 > Now `-oN nmap/...` and `-o ffuf/...` work, and everything for this box is in one place.
 
