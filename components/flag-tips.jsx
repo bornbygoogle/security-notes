@@ -101,7 +101,6 @@ export default function FlagTips () {
     }
 
     // ── decorate ────────────────────────────────────────────────────────
-    let decorated = 0
     for (const code of main.querySelectorAll('code.nextra-code')) {
       if (code.dataset.snFlags) continue
       const lineEls = Array.from(code.children).filter((n) => n.tagName === 'SPAN')
@@ -135,12 +134,18 @@ export default function FlagTips () {
           if (m[1]) token.appendChild(document.createTextNode(m[1]))
           token.appendChild(btn)
           if (m[3]) token.appendChild(document.createTextNode(m[3]))
-          decorated++
         }
       })
     }
 
-    if (decorated === 0) {
+    // Do NOT bail when `decorated === 0`. Under reactStrictMode React runs
+    // this effect twice: the first pass decorates and marks each block with
+    // data-sn-flags, the second finds everything already marked and counts
+    // zero — so an early return here left dev with no listeners at all and no
+    // tooltip ever responded. "Already decorated" and "nothing to decorate"
+    // are different states; only the latter is a reason to skip, and the
+    // cheap way to tell is to look for a button rather than count this pass.
+    if (main.querySelector('button.sn-flag') === null) {
       tip.remove()
       return
     }
@@ -164,6 +169,12 @@ export default function FlagTips () {
       window.removeEventListener('scroll', hide, true)
       window.removeEventListener('resize', hide)
       tip.remove()
+      // Clear the marker so a later pass can decorate again if the DOM was
+      // swapped underneath us. The buttons themselves are left in place —
+      // they carry the original textContent, so copy still works.
+      for (const code of main.querySelectorAll('code[data-sn-flags]')) {
+        delete code.dataset.snFlags
+      }
     }
   }, [pathname])
 

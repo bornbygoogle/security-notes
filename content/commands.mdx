@@ -231,7 +231,7 @@ ffuf -u http://$IP/<endpoint> -X POST -H 'Content-Type: application/json' \
 ffuf -u http://$IP/<endpoint> -X POST -H 'FUZZ: test' -d '{}' -w common.txt -fs 56
 # cookie name / query param
 ffuf -u http://$IP/<endpoint> -H 'Cookie: FUZZ=test'   -w common.txt -fs 56
-ffuf -u 'http://$IP/<endpoint>?FUZZ=test'              -w common.txt -fs 56
+ffuf -u "http://$IP/<endpoint>?FUZZ=test"              -w common.txt -fs 56
 # filename with a required extension
 ffuf -u http://$IP/<endpoint> -X POST -H 'Content-Type: application/json' \
      -d '{"file_path":"FUZZ.yaml"}'              -w common.txt -fs 55

@@ -1,3 +1,7 @@
+---
+description: "Static analysis of a Windows game binary for absolute beginners — strings, byte offsets and hexdumps, without ever running the executable."
+---
+
 # Unpacking Tetrix — a beginner's walkthrough
 
 **TryHackMe · Hackfinity Battle 2025 · challenge file: `Tetrix.exe`**

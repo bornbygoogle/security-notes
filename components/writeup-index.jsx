@@ -17,7 +17,10 @@ export default async function WriteupIndex () {
   const items = []
   for (const e of entries) {
     if (!e.isDirectory()) continue
-    const files = await readdir(path.join(dir, e.name))
+    // Sort first: readdir order is filesystem-dependent, so a folder holding
+    // more than one .md would otherwise link to whichever came back first and
+    // could change between machines.
+    const files = (await readdir(path.join(dir, e.name))).sort()
     const doc = files.find((f) => /\.mdx?$/.test(f) && f !== '_meta.js')
     if (!doc) continue
     const md = await readFile(path.join(dir, e.name, doc), 'utf8')

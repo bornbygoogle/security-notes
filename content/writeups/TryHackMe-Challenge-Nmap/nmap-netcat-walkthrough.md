@@ -1,3 +1,7 @@
+---
+description: "A high port leaks a banner, the banner leaks credentials, the credentials open SSH. Full-port scanning and netcat banner grabbing, with the wrong turns kept in."
+---
+
 # TryHackMe — Nmap Challenge: from a high port to a shell
 
 **Target:** `10.129.152.110`

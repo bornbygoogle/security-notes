@@ -1,0 +1,22 @@
+name: CI
+
+# The flag dictionary and the quiz bank are pinned by tests: a lesson that
+# types an unexplained flag, or a new lesson with no quiz, fails here rather
+# than shipping. lib/flags.js says this runs — so it has to actually run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

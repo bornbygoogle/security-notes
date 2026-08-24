@@ -225,9 +225,14 @@ export default function Dashboard () {
   const coverage = useMemo(() => phaseCoverage(lessons), [lessons])
   const projection = useMemo(() => projectedScore(lessons), [lessons])
 
-  const now = new Date()
-  const week = weekForDate(now)
-  const left = daysRemaining(now)
+  // Same rule as every other stat here: nothing date-derived until the client
+  // says so. Read on the server it bakes the build date into the static HTML —
+  // "Days left 125" shipped and stayed 125 until React hit a text mismatch and
+  // re-rendered. useProgress flips `ready` in an effect, so this only runs
+  // client-side, and the first paint matches what the server sent.
+  const now = ready ? new Date() : null
+  const week = now ? weekForDate(now) : null
+  const left = now ? daysRemaining(now) : null
 
   return (
     <div className="sn-dash">
@@ -244,11 +249,11 @@ export default function Dashboard () {
         <dl className="sn-stats">
           <div>
             <dt>Plan week</dt>
-            <dd className="mono">{week ? `${week.n} of ${WEEKS.length}` : 'Starts 24 Aug'}</dd>
+            <dd className="mono">{ready ? (week ? `${week.n} of ${WEEKS.length}` : 'Starts 24 Aug') : '—'}</dd>
           </div>
           <div>
             <dt>Days left</dt>
-            <dd className="mono">{left > 0 ? left : 0}</dd>
+            <dd className="mono">{ready ? Math.max(0, left) : '—'}</dd>
           </div>
           <div>
             <dt>Lessons done</dt>
@@ -256,7 +261,7 @@ export default function Dashboard () {
           </div>
           <div>
             <dt>This week</dt>
-            <dd>{week ? week.focus : 'Module 0, setup and basics'}</dd>
+            <dd>{ready ? (week ? week.focus : 'Module 0, setup and basics') : '—'}</dd>
           </div>
         </dl>
       </header>

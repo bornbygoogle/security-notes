@@ -69,6 +69,15 @@ export function useProgress () {
         lessons[id] = { done: true, at: day }
         days[day] = (days[day] ?? 0) + 1
       } else {
+        // Give the day its count back. Without this the heatmap kept a filled
+        // cell for a lesson you un-ticked, and re-ticking it on another day
+        // counted the same lesson twice — so the "N days studied" figure only
+        // ever drifted upward.
+        const was = prev.lessons[id]?.at
+        if (was && days[was]) {
+          if (days[was] <= 1) delete days[was]
+          else days[was] -= 1
+        }
         delete lessons[id]
       }
       return { ...prev, lessons, days }

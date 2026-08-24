@@ -101,6 +101,12 @@ export default function Drill ({ cards, sections }) {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const tag = document.activeElement?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      // Enter belongs to whatever has focus. Swallowing it here graded the
+      // card "correct" even when the focused button was Again — promoting a
+      // card you had just failed, which quietly corrupts the schedule.
+      const onButton = document.activeElement?.tagName === 'BUTTON'
+      if (e.key === 'Enter' && onButton) return
+      if (e.key === ' ' && onButton) return
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault()
         if (!flipped) setFlipped(true)

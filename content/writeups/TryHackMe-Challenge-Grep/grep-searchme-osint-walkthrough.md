@@ -1,3 +1,7 @@
+---
+description: "A full web pentest end to end — OSINT on a leaked repo, a client-side API key, an insecure upload to RCE, then the database and credential recovery."
+---
+
 # Grep / SuperSecure Corp (SearchME) — OSINT + Web Walkthrough (PT1 study edition)
 
 > **What you'll learn:** a complete, methodical web pentest — recon → enumeration → OSINT →

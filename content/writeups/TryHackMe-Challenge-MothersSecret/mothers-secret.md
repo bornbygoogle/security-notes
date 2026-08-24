@@ -1,3 +1,7 @@
+---
+description: "A Node/Express app taken apart from the browser down: obfuscated client JS, Socket.IO auth gates, and a path traversal in a YAML loader that reads files far outside the intended tree."
+---
+
 # Mother's Secret — THMCSS Nostromo / MU-TH-UR 6000
 
 **TryHackMe · challenge room · target: web application on a single host**
