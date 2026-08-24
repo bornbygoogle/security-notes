@@ -11,6 +11,10 @@
 > The failed attempts are kept in on purpose. In a real assessment (and in the exam) the dead ends
 > *are* the learning; a clean narrative that hides them teaches nothing.
 
+> **Flags are redacted in this write-up.** Every flag value is replaced with `[redacted]`.
+> The commands, payloads and dead ends are all intact — work the box and you get the real
+> string, which is the only part of it that teaches you anything.
+
 ---
 
 ## The answers (lead with the result)
@@ -18,7 +22,7 @@
 | # | Question | Answer |
 |---|----------|--------|
 | 1 | API key that allows a user to register | `ffe60ecaa8bba2f12b43d1a4b15b8f39` |
-| 2 | First flag | `THM{4ec9806d7e1350270dc402ba870ccebb}` |
+| 2 | First flag | `THM{[redacted]}` |
 | 3 | Email of the "admin" user | `admin@searchme2023cms.grep.thm` |
 | 4 | Hostname of the app that checks an email for a password leak | `leakchecker.grep.thm` |
 | 5 | Password of the "admin" user | `admin_tryhackme!` |
@@ -397,13 +401,13 @@ HTML — call the API directly with your cookie:
 ```bash
 curl -sk --resolve grep.thm:443:10.129.164.123 \
   -b 'PHPSESSID=PASTE_YOURS_HERE' https://grep.thm/api/posts.php
-#   [{"title":"First Flag","content":"THM{4ec9806d7e1350270dc402ba870ccebb}"}, ...]
+#   [{"title":"First Flag","content":"THM{[redacted]}"}, ...]
 ```
 
 - `-b 'PHPSESSID=...'` — send a **cookie** with the request (`-b` = "cookie jar / cookie string").
   This is what makes the request *authenticated*. Without it: `{"error":"Not logged in"}`.
 
-### ✅ Question 2 — First flag: `THM{4ec9806d7e1350270dc402ba870ccebb}`
+### ✅ Question 2 — First flag: `THM{[redacted]}`
 
 ---
 
@@ -1023,7 +1027,7 @@ curl -sk --resolve grep.thm:443:10.129.164.123 \
 
 ```
 Q1  API key (register):   ffe60ecaa8bba2f12b43d1a4b15b8f39
-Q2  First flag:           THM{4ec9806d7e1350270dc402ba870ccebb}
+Q2  First flag:           THM{[redacted]}
 Q3  Admin email:          admin@searchme2023cms.grep.thm
 Q4  Leak-checker host:    leakchecker.grep.thm
 Q5  Admin password:       admin_tryhackme!

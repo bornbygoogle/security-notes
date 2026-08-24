@@ -9,6 +9,10 @@ Then find the flag.
 These are running notes. Every command is written down as it was run, in order, including the
 attempts that went nowhere — for the PT1 exam the dead ends are the part worth learning.
 
+> **Flags are redacted in this write-up.** Every flag value is replaced with `[redacted]`.
+> The commands, payloads and dead ends are all intact — work the box and you get the real
+> string, which is the only part of it that teaches you anything.
+
 **Methodology phase mapping**
 
 | Phase | What it means here |
@@ -344,7 +348,7 @@ cat /home/user/flag.txt
 ## 🚩 Flag
 
 ```
-flag{251f309497a18888dde5222761ea88e4}
+flag{[redacted]}
 ```
 
 **Verification status:** read directly off the target filesystem with `cat`, output shown above.

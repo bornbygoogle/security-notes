@@ -22,10 +22,14 @@ We are **not** going to run the game. We're going to read the file as *data* and
 That's called **static analysis** — studying a program without executing it. It's the safe default,
 because running an unknown Windows binary on your machine is how people get infected.
 
+> **Flags are redacted in this write-up.** Every flag value is replaced with `[redacted]`.
+> The commands, payloads and dead ends are all intact — work the box and you get the real
+> string, which is the only part of it that teaches you anything.
+
 **The answer, up front:**
 
 ```
-THM{I_CAN_READ_IT_ALL}
+THM{[redacted]}
 ```
 
 Now let's understand how to find it — and, more interestingly, *why the challenge author thought you
@@ -86,7 +90,7 @@ strings -a Tetrix.exe | grep "THM{"
 Output:
 
 ```
-THM{I_CAN_READ_IT_ALL}
+THM{[redacted]}
 ```
 
 **That's the flag. Done.**
@@ -130,7 +134,7 @@ time ( strings -a Tetrix.exe | grep "THM{" )
 ```
 
 ```
-THM{I_CAN_READ_IT_ALL}
+THM{[redacted]}
 ( strings -a Tetrix.exe | grep "THM{"; )  0.78s user 0.05s system 103% cpu 0.804 total
 ```
 
@@ -150,7 +154,7 @@ pv Tetrix.exe | strings -a | grep "THM{"
 
 ```
 88.7MiB 0:00:00 [ 101MiB/s] [=========================>] 100%
-THM{I_CAN_READ_IT_ALL}
+THM{[redacted]}
 ```
 
 You get bytes processed, elapsed time, throughput, a bar and an ETA. Install it with
@@ -214,7 +218,7 @@ grep -ao "THM{[^}]*}" Tetrix.exe
 ```
 
 ```
-THM{I_CAN_READ_IT_ALL}
+THM{[redacted]}
 ```
 
 `-o` prints **only** the matched part, not the whole line. `THM{[^}]*}` means: the text `THM{`, then
@@ -817,7 +821,7 @@ LINES
 RETRY
 PAUSE
 QUIT
-THM{I_CAN_READ_IT_ALL}
+THM{[redacted]}
 GAME OVER
 ```
 
@@ -841,7 +845,7 @@ passes 999,999. A player earns it. We just read it out of the file instead — w
 the flag's wording, *"I can read it all"*, is teasing.
 
 ```
-THM{I_CAN_READ_IT_ALL}
+THM{[redacted]}
 ```
 
 ---

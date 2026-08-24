@@ -18,6 +18,11 @@ public/_pagefind/
 /CLAUDE.md
 /.vscode/
 
+# Real flag values. NEVER inside content/ — Nextra turns every .md under
+# content/ into a published, Pagefind-indexed page, so a "local" notes file
+# there is a live URL. Flags live here, outside the content tree, only.
+/flags/
+
 # CTF samples & artefacts: NEVER inside content/.
 # Nextra webpack-scans all of content/, so a binary there breaks the build
 # (not just a git concern). Samples live in /samples/ and stay out of the repo.
