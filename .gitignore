@@ -37,3 +37,8 @@ content/writeups/**/*.bin
 content/writeups/**/*.img
 content/writeups/**/*.pcap
 content/writeups/**/work/
+
+# Mission walkthroughs — the private, step-by-step log of every mission.
+# Written BEFORE execution, annotated DURING it. Holds raw output and real
+# flags, so it stays out of git and outside content/ (Nextra publishes that).
+/walkthrough/

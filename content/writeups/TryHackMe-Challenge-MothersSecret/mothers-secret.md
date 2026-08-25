@@ -1426,3 +1426,44 @@ was a correct request that failed for environmental reasons, which I treated as 
 authorisation gate and then spent hundreds of requests trying to bypass. Two failed fixes sharing an
 untested premise is the signal to go test the premise — I noticed that pattern once and acted on it,
 and missed it the second time.
+
+---
+
+## 10. Teardown and scope — what was left on the box
+
+**Whatever you start, you stop.** This is the last step of any engagement, not an afterthought, and
+it belongs in the write-up because "what did you leave behind" is a question a client will ask.
+
+| Started | How it was stopped | Verified? |
+|---|---|---|
+| **Nothing was written to the target** | no shell uploaded, no key added, no file created, no account registered — every single request was a **read** | **Yes, by construction** |
+| Local copy of `index.min.js` and the helper scripts | kept in a scratch directory, outside any repository | Assumed — they are gone, but the manner of their going wasn't recorded |
+| `nmap` scans | short-lived; both exited on their own | Yes |
+| No `/etc/hosts` entry was ever needed | the box was addressed by IP throughout | Yes |
+
+**This is the cleanest teardown you will see, and the reason is structural rather than virtuous:
+the entire attack was a *read primitive*.** Path traversal reads files. It does not write them. So
+there was never anything to remove, and no way to accidentally leave a door open for the next
+person.
+
+Contrast that with a file-upload box, where getting RCE *means* putting an executable web shell in a
+world-reachable directory. There, cleanup is mandatory and easy to get half-right — delete the shell
+you remember and forget the second one you uploaded twenty minutes later, and you have handed the
+next visitor a working backdoor **plus** whatever credentials that second file happened to contain.
+
+> **Worth internalising as a habit, not a rule you look up:** the moment an exploit changes from
+> *reading* to *writing*, you have acquired a cleanup obligation. Start the list at that moment,
+> while there is exactly one item on it — not at the end, when you are tired and trying to remember
+> what you did an hour ago.
+
+### Scope
+
+All activity was against a single TryHackMe lab machine (`10.128.135.177` on this run; the platform
+issues a fresh IP each session) over its VPN. No lateral movement was attempted, no other host was
+touched, and the credentials and paths in this document belong to a disposable lab box that no longer
+exists.
+
+**Verification status of every value in §7:** all of them were retrieved from the target with the
+commands shown, and the whole chain was re-run end to end to confirm it reproduces. **None of them
+was submitted to TryHackMe's answer box**, so they are *evidence-backed*, not *platform-confirmed* —
+two different claims, and worth keeping apart.

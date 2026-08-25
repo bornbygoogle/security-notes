@@ -51,6 +51,37 @@ Before any command, form a plan. A web target gives you three obvious questions:
 
 Keep a scratch file of everything you find (hostnames, endpoints, creds). You'll re-use it.
 
+### What "done" looks like
+
+Write this down before starting, because it decides when you stop: **all five answers, each with
+the exact command that produced it, and an explanation of why that command was the right next
+move.** A list of answers with no reproducible path is a scoreboard, not a pentest.
+
+### The load-bearing unknowns
+
+A **load-bearing unknown** is a fact that, if you have it wrong, makes everything built on top of it
+worthless. Naming them first is how you avoid an hour of confident, fictional results.
+
+1. **How do I even reach the application?** This box uses name-based virtual hosts. Get it wrong and
+   every later result is a test of the wrong website. Cheapest to check, biggest consequence — so it
+   goes first, in §0.
+2. **What is the attack surface?** Which ports, which services, which hostnames.
+3. **Where does the trust boundary break?** Somewhere the app trusts something it shouldn't. Finding
+   *which* boundary is the whole mission — and on this box it breaks in three separate places.
+
+### Phase map — which section is which phase
+
+Knowing which phase you're in stops you flailing, because each one asks a different question.
+
+| Phase | The question it asks | Sections |
+|---|---|---|
+| Recon | Can I reach it, and what's listening? | §1 |
+| Enumeration | What does the app do, and how? | §2 |
+| OSINT | What can I learn *without touching the target at all*? | §3 |
+| Exploitation | How do I cross a trust boundary? | §4, §6 |
+| Post-exploitation | What do I reach once I'm in? | §6.8, §7 |
+| Reporting | What broke, why, and what fixes it? | §8, §9 |
+
 ---
 
 ## 0. Setup — virtual hosts (the #1 beginner trap)
@@ -93,6 +124,13 @@ curl -sk --resolve grep.thm:443:10.129.164.123 https://grep.thm/
 
 > **PT1 takeaway:** if a box "looks empty" on the IP but the scan shows web ports, suspect vhosts.
 > Read the TLS certificate and try `FQDN`-style hostnames.
+
+> **A trap waiting for you when you switch tools:** `ffuf` has **no `--resolve`**. If you move from
+> `curl` to `ffuf` for directory or vhost fuzzing, this workaround does not come with you — a
+> hostname in `-u` just dies at DNS, silently, and you get an empty result that looks exactly like
+> "nothing is there." With `ffuf`, put the **IP in the URL** and the **hostname in a `-H "Host: …"`
+> header** instead. Which option you picked in §0 quietly decides which mistakes are available to
+> you later.
 
 ---
 
@@ -1015,15 +1053,62 @@ hands over the admin password.
 
 ## 9. Cleanup — be a good guest (and it's exam etiquette)
 
-Remove artifacts you dropped:
+**This is not politeness. A web shell left in a reachable upload directory is a vulnerability *you*
+introduced**, and on a shared lab box the next person inherits it. On a real engagement it is a
+finding against your own team.
+
+**Step 1 — list everything you put on the target.** Do this from memory *and* from your command
+history, because the whole failure mode here is forgetting one. On this box that list is:
+
+| Artifact | What it is | Why it matters |
+|---|---|---|
+| `api/uploads/p0wn.php` | arbitrary-command web shell | anyone who finds it gets RCE as `www-data` |
+| `api/uploads/dump.php` | the database dumper from §6.8 | **it contains live DB credentials in its source** |
+| the `pentest01` account | a registered user | a real account you created on the target |
+
+**Step 2 — remove each one, and verify each removal separately.**
 
 ```bash
+# delete the DB dumper first — it holds credentials, so it's the higher risk
+curl -sk --resolve grep.thm:443:10.129.164.123 \
+  'https://grep.thm/api/uploads/p0wn.php?c=rm%20/var/www/html/api/uploads/dump.php'
+
+# then have the shell delete itself, last — you need it to remove the others
 curl -sk --resolve grep.thm:443:10.129.164.123 \
   'https://grep.thm/api/uploads/p0wn.php?c=rm%20/var/www/html/api/uploads/p0wn.php'
 ```
 
-- `c=rm%20...` — runs `rm <path>` (delete the file) via the same web shell, then it deletes itself.
-  Confirm with a follow-up request that now returns `404`.
+- `c=rm%20...` — runs `rm <path>` via the same web shell. `%20` is a URL-encoded space.
+- **Order matters.** The shell is your only way to delete anything, so it goes last. Delete it first
+  and you've locked yourself out of your own cleanup.
+
+**Step 3 — verify. This is the part people skip.**
+
+```bash
+curl -sk -o /dev/null -w '%{http_code}\n' --resolve grep.thm:443:10.129.164.123 \
+  https://grep.thm/api/uploads/dump.php
+curl -sk -o /dev/null -w '%{http_code}\n' --resolve grep.thm:443:10.129.164.123 \
+  https://grep.thm/api/uploads/p0wn.php
+# 404
+# 404
+```
+
+- `-o /dev/null` — throw the body away; only the status code matters here.
+- `-w '%{http_code}\n'` — print just the status code.
+
+**"The `rm` command returned nothing" is not confirmation. A `404` is.** An `rm` that failed —
+wrong path, wrong permissions, a typo — also returns nothing, and looks identical to success. This
+is dead end §6.4 wearing a different costume: *silence is not success*, at cleanup time just as much
+as at upload time.
+
+> **Honest note on this run:** the original cleanup removed `p0wn.php` **only**. `dump.php` — the
+> second shell, the one carrying live database credentials — was left behind, and the `404` checks
+> above were never run. The lab IP has long since been recycled, so it can't be fixed now. It's
+> written up rather than quietly corrected because it's exactly the failure this section exists to
+> prevent, and a clean narrative that hides it would teach the wrong habit.
+>
+> **The rule: a cleanup command that removes one artifact is not a teardown.** Enumerate everything
+> you created, remove each item, verify each removal.
 
 ---
 

