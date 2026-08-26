@@ -4,5 +4,7 @@ export default {
   'TryHackMe-Challenge-Grep': 'TryHackMe — Grep (SearchME)',
   'TryHackMe-Challenge-Nmap': 'TryHackMe — Nmap Challenge',
   'TryHackMe-Challenge-MothersSecret': "TryHackMe — Mother's Secret",
-  'TryHackMe-Challenge-Olympus': 'TryHackMe — Olympus'
+  'TryHackMe-Challenge-Olympus': 'TryHackMe — Olympus',
+  'TryHackMe-Challenge-BasicPentestingJT': 'TryHackMe — Basic Pentesting (JT)',
+  'TryHackMe-Challenge-CheckMate': 'TryHackMe — CheckMate'
 }
