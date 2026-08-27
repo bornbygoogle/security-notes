@@ -8,5 +8,6 @@ export default {
   'TryHackMe-Challenge-BasicPentestingJT': 'TryHackMe — Basic Pentesting (JT)',
   'TryHackMe-Challenge-CheckMate': 'TryHackMe — CheckMate',
   'TryHackMe-Challenge-Injectics': 'TryHackMe — Injectics',
-  'TryHackMe-Challenge-Order': 'TryHackMe — Order (repeating-key XOR)'
+  'TryHackMe-Challenge-Order': 'TryHackMe — Order (repeating-key XOR)',
+  'TryHackMe-Challenge-OperationSlither': 'TryHackMe — Operation Slither (OSINT)'
 }
