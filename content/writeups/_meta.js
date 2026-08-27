@@ -9,5 +9,6 @@ export default {
   'TryHackMe-Challenge-CheckMate': 'TryHackMe — CheckMate',
   'TryHackMe-Challenge-Injectics': 'TryHackMe — Injectics',
   'TryHackMe-Challenge-Order': 'TryHackMe — Order (repeating-key XOR)',
-  'TryHackMe-Challenge-OperationSlither': 'TryHackMe — Operation Slither (OSINT)'
+  'TryHackMe-Challenge-OperationSlither': 'TryHackMe — Operation Slither (OSINT)',
+  'TryHackMe-Challenge-SchemeCatcher': 'TryHackMe — SchemeCatcher (heap pwn + kernel LPE)'
 }
