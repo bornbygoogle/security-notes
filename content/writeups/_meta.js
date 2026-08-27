@@ -7,5 +7,6 @@ export default {
   'TryHackMe-Challenge-Olympus': 'TryHackMe — Olympus',
   'TryHackMe-Challenge-BasicPentestingJT': 'TryHackMe — Basic Pentesting (JT)',
   'TryHackMe-Challenge-CheckMate': 'TryHackMe — CheckMate',
-  'TryHackMe-Challenge-Injectics': 'TryHackMe — Injectics'
+  'TryHackMe-Challenge-Injectics': 'TryHackMe — Injectics',
+  'TryHackMe-Challenge-Order': 'TryHackMe — Order (repeating-key XOR)'
 }
