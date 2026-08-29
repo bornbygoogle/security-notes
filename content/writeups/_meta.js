@@ -11,5 +11,6 @@ export default {
   'TryHackMe-Challenge-Order': 'TryHackMe — Order (repeating-key XOR)',
   'TryHackMe-Challenge-OperationSlither': 'TryHackMe — Operation Slither (OSINT)',
   'TryHackMe-Challenge-SchemeCatcher': 'TryHackMe — SchemeCatcher (heap pwn + kernel LPE)',
-  'TryHackMe-DifferentCTF': 'TryHackMe — Different CTF (Adana: decoy vhost + SUID)'
+  'TryHackMe-DifferentCTF': 'TryHackMe — Different CTF (Adana: decoy vhost + SUID)',
+  'TryHackMe-Challenge-WhatsYourName': "TryHackMe — What's Your Name? (WorldWAP: stored XSS → CSRF)"
 }
