@@ -13,5 +13,8 @@ export default {
   'TryHackMe-Challenge-SchemeCatcher': 'TryHackMe — SchemeCatcher (heap pwn + kernel LPE)',
   'TryHackMe-Challenge-HellsKitchen': "TryHackMe — Hell's Kitchen (SQLi + WS RCE + local NFS root)",
   'TryHackMe-DifferentCTF': 'TryHackMe — Different CTF (Adana: decoy vhost + SUID)',
-  'TryHackMe-Challenge-WhatsYourName': "TryHackMe — What's Your Name? (WorldWAP: stored XSS → CSRF)"
+  'TryHackMe-Challenge-WhatsYourName': "TryHackMe — What's Your Name? (WorldWAP: stored XSS → CSRF)",
+  'TryHackMe-Challenge-Flip': 'TryHackMe — Flip (AES-CBC bit-flip)',
+  'TryHackMe-Challenge-Frankesqwen': "TryHackMe — Frankesqwen (LLM training-data extraction)",
+  'TryHackMe-Challenge-LookBack': 'TryHackMe — LookBack (Exchange ProxyShell)'
 }
