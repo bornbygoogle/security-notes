@@ -19,5 +19,6 @@ export default {
   'TryHackMe-Challenge-Expose': 'TryHackMe — Expose (MQTT/1337 recon → SQLi → upload → SUID find)',
   'TryHackMe-Challenge-LookBack': 'TryHackMe — LookBack (Exchange ProxyShell)',
   'TryHackMe-Challenge-OperationColdStart': 'TryHackMe — Operation Cold Start (SSRF allow-list → tar wildcard root)',
-  'TryHackMe-Challenge-BreachBlockerUnlocker': 'TryHackMe — BreachBlocker Unlocker (exposed main.py → per-char hash → OTP cookie replay)'
+  'TryHackMe-Challenge-BreachBlockerUnlocker': 'TryHackMe — BreachBlocker Unlocker (exposed main.py → per-char hash → OTP cookie replay)',
+  'TryHackMe-Challenge-WaterBottle': 'TryHackMe — Water Bottle (OSINT: Street View time-travel on a vanished shopfront)'
 }
