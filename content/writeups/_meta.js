@@ -16,5 +16,8 @@ export default {
   'TryHackMe-Challenge-WhatsYourName': "TryHackMe — What's Your Name? (WorldWAP: stored XSS → CSRF)",
   'TryHackMe-Challenge-Flip': 'TryHackMe — Flip (AES-CBC bit-flip)',
   'TryHackMe-Challenge-Frankesqwen': "TryHackMe — Frankesqwen (LLM training-data extraction)",
-  'TryHackMe-Challenge-LookBack': 'TryHackMe — LookBack (Exchange ProxyShell)'
+  'TryHackMe-Challenge-Expose': 'TryHackMe — Expose (MQTT/1337 recon → SQLi → upload → SUID find)',
+  'TryHackMe-Challenge-LookBack': 'TryHackMe — LookBack (Exchange ProxyShell)',
+  'TryHackMe-Challenge-OperationColdStart': 'TryHackMe — Operation Cold Start (SSRF allow-list → tar wildcard root)',
+  'TryHackMe-Challenge-BreachBlockerUnlocker': 'TryHackMe — BreachBlocker Unlocker (exposed main.py → per-char hash → OTP cookie replay)'
 }
