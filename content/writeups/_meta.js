@@ -22,5 +22,6 @@ export default {
   'TryHackMe-Challenge-BreachBlockerUnlocker': 'TryHackMe — BreachBlocker Unlocker (exposed main.py → per-char hash → OTP cookie replay)',
   'TryHackMe-Challenge-WaterBottle': 'TryHackMe — Water Bottle (OSINT: Street View time-travel on a vanished shopfront)',
   'TryHackMe-Challenge-Jump': 'TryHackMe — Jump (FTP cron → group-write → PATH hijack → sudo less)',
-  'TryHackMe-Challenge-CupidMatchmake': "TryHackMe — Cupid's Matchmaker (stored XSS → headless reviewer's cookie)"
+  'TryHackMe-Challenge-CupidMatchmake': "TryHackMe — Cupid's Matchmaker (stored XSS → headless reviewer's cookie)",
+  'TryHackMe-Challenge-Skynet': 'TryHackMe — Skynet (anon SMB → webmail → Cuppa CMS RCE → tar wildcard root)'
 }
