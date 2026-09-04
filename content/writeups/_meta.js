@@ -23,5 +23,6 @@ export default {
   'TryHackMe-Challenge-WaterBottle': 'TryHackMe — Water Bottle (OSINT: Street View time-travel on a vanished shopfront)',
   'TryHackMe-Challenge-Jump': 'TryHackMe — Jump (FTP cron → group-write → PATH hijack → sudo less)',
   'TryHackMe-Challenge-CupidMatchmake': "TryHackMe — Cupid's Matchmaker (stored XSS → headless reviewer's cookie)",
-  'TryHackMe-Challenge-Skynet': 'TryHackMe — Skynet (anon SMB → webmail → Cuppa CMS RCE → tar wildcard root)'
+  'TryHackMe-Challenge-Skynet': 'TryHackMe — Skynet (anon SMB → webmail → Cuppa CMS RCE → tar wildcard root)',
+  'TryHackMe-Challenge-DevDiaries': 'TryHackMe — Dev Diaries (OSINT: CT logs → Wayback → deleted git history)'
 }
