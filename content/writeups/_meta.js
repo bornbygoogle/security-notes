@@ -26,5 +26,6 @@ export default {
   'TryHackMe-Challenge-Skynet': 'TryHackMe — Skynet (anon SMB → webmail → Cuppa CMS RCE → tar wildcard root)',
   'TryHackMe-Challenge-DevDiaries': 'TryHackMe — Dev Diaries (OSINT: CT logs → Wayback → deleted git history)',
   'TryHackMe-Challenge-CacheMeOutside': 'TryHackMe — Cache Me Outside (OSINT: komoot → git metadata → photo geolocation)',
-  'TryHackMe-Challenge-Matryoshka': 'TryHackMe — Matryoshka (nested Docker escapes: socket → shared folder → --pid=host)'
+  'TryHackMe-Challenge-Matryoshka': 'TryHackMe — Matryoshka (nested Docker escapes: socket → shared folder → --pid=host)',
+  'TryHackMe-Challenge-Interceptor': 'TryHackMe — Interceptor (MediaHub: .bak creds → OTP mass-assignment → command injection)'
 }
