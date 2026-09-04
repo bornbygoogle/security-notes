@@ -20,5 +20,7 @@ export default {
   'TryHackMe-Challenge-LookBack': 'TryHackMe — LookBack (Exchange ProxyShell)',
   'TryHackMe-Challenge-OperationColdStart': 'TryHackMe — Operation Cold Start (SSRF allow-list → tar wildcard root)',
   'TryHackMe-Challenge-BreachBlockerUnlocker': 'TryHackMe — BreachBlocker Unlocker (exposed main.py → per-char hash → OTP cookie replay)',
-  'TryHackMe-Challenge-WaterBottle': 'TryHackMe — Water Bottle (OSINT: Street View time-travel on a vanished shopfront)'
+  'TryHackMe-Challenge-WaterBottle': 'TryHackMe — Water Bottle (OSINT: Street View time-travel on a vanished shopfront)',
+  'TryHackMe-Challenge-Jump': 'TryHackMe — Jump (FTP cron → group-write → PATH hijack → sudo less)',
+  'TryHackMe-Challenge-CupidMatchmake': "TryHackMe — Cupid's Matchmaker (stored XSS → headless reviewer's cookie)"
 }
