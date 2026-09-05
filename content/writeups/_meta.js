@@ -32,5 +32,6 @@ export default {
   'TryHackMe-Challenge-TrustedByDefault': 'TryHackMe — Trusted By Default (Splunk SOC: web POST → batch logon → group-add → RDP)',
   'TryHackMe-Challenge-FoolMateRevenge': "TryHackMe — Fool Mate's Revenge (Endgame Trainer: verbose gate → server-side prototype pollution)",
   'TryHackMe-Challenge-PlantPhotographer': 'TryHackMe — Plant Photographer (SSRF → API key + localhost admin → file:// read → Werkzeug console RCE)',
-  'TryHackMe-Challenge-Domino': 'TryHackMe — Domino (NexusCorp: key in app.js → unsigned JWT file-read → APP_SECRET session forge + IDOR → RFI RCE → cred reuse → cron root)'
+  'TryHackMe-Challenge-Domino': 'TryHackMe — Domino (NexusCorp: key in app.js → unsigned JWT file-read → APP_SECRET session forge + IDOR → RFI RCE → cred reuse → cron root)',
+  'TryHackMe-Challenge-Dreaming': 'TryHackMe — Dreaming (Pluck 4.7.13: broken lockout → .tar.gz module RCE → creds in /opt → MySQL row into shell=True → group-writable shutil.py)'
 }
