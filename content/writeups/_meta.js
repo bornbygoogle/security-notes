@@ -29,5 +29,6 @@ export default {
   'TryHackMe-Challenge-Matryoshka': 'TryHackMe — Matryoshka (nested Docker escapes: socket → shared folder → --pid=host)',
   'TryHackMe-Challenge-Interceptor': 'TryHackMe — Interceptor (MediaHub: .bak creds → OTP mass-assignment → command injection)',
   'TryHackMe-Challenge-Decryptify': 'TryHackMe — Decryptify (obfuscated JS key → mt_rand invite forge → CBC padding-oracle RCE)',
-  'TryHackMe-Challenge-TrustedByDefault': 'TryHackMe — Trusted By Default (Splunk SOC: web POST → batch logon → group-add → RDP)'
+  'TryHackMe-Challenge-TrustedByDefault': 'TryHackMe — Trusted By Default (Splunk SOC: web POST → batch logon → group-add → RDP)',
+  'TryHackMe-Challenge-FoolMateRevenge': "TryHackMe — Fool Mate's Revenge (Endgame Trainer: verbose gate → server-side prototype pollution)"
 }
