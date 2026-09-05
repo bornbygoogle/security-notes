@@ -31,5 +31,6 @@ export default {
   'TryHackMe-Challenge-Decryptify': 'TryHackMe — Decryptify (obfuscated JS key → mt_rand invite forge → CBC padding-oracle RCE)',
   'TryHackMe-Challenge-TrustedByDefault': 'TryHackMe — Trusted By Default (Splunk SOC: web POST → batch logon → group-add → RDP)',
   'TryHackMe-Challenge-FoolMateRevenge': "TryHackMe — Fool Mate's Revenge (Endgame Trainer: verbose gate → server-side prototype pollution)",
-  'TryHackMe-Challenge-PlantPhotographer': 'TryHackMe — Plant Photographer (SSRF → API key + localhost admin → file:// read → Werkzeug console RCE)'
+  'TryHackMe-Challenge-PlantPhotographer': 'TryHackMe — Plant Photographer (SSRF → API key + localhost admin → file:// read → Werkzeug console RCE)',
+  'TryHackMe-Challenge-Domino': 'TryHackMe — Domino (NexusCorp: key in app.js → unsigned JWT file-read → APP_SECRET session forge + IDOR → RFI RCE → cred reuse → cron root)'
 }
