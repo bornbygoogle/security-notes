@@ -42,3 +42,6 @@ content/writeups/**/work/
 # Written BEFORE execution, annotated DURING it. Holds raw output and real
 # flags, so it stays out of git and outside content/ (Nextra publishes that).
 /walkthrough/
+
+# Personal Claude Code settings overrides (auto-mode classifier rules, etc.)
+/.claude/settings.local.json
