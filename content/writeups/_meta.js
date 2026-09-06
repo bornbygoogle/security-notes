@@ -34,5 +34,6 @@ export default {
   'TryHackMe-Challenge-PlantPhotographer': 'TryHackMe — Plant Photographer (SSRF → API key + localhost admin → file:// read → Werkzeug console RCE)',
   'TryHackMe-Challenge-Domino': 'TryHackMe — Domino (NexusCorp: key in app.js → unsigned JWT file-read → APP_SECRET session forge + IDOR → RFI RCE → cred reuse → cron root)',
   'TryHackMe-Challenge-Dreaming': 'TryHackMe — Dreaming (Pluck 4.7.13: broken lockout → .tar.gz module RCE → creds in /opt → MySQL row into shell=True → group-writable shutil.py)',
-  'TryHackMe-Challenge-Extract': 'TryHackMe — Extract (TryBookMe: nano .swp leak → SSRF blacklist bypass via gopher:// → loopback-only Next.js → CVE-2025-29927 middleware bypass → serialized-cookie 2FA flip)'
+  'TryHackMe-Challenge-Extract': 'TryHackMe — Extract (TryBookMe: nano .swp leak → SSRF blacklist bypass via gopher:// → loopback-only Next.js → CVE-2025-29927 middleware bypass → serialized-cookie 2FA flip)',
+  'TryHackMe-Challenge-ContraBando': 'TryHackMe — ContraBando (Apache 2.4.55 request smuggling → gen.php command injection → internal Flask SSRF+SSTI → vault [[ == ]] glob oracle leaks /root/password → python2 input() eval root)',
 }
