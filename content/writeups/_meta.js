@@ -36,4 +36,5 @@ export default {
   'TryHackMe-Challenge-Dreaming': 'TryHackMe — Dreaming (Pluck 4.7.13: broken lockout → .tar.gz module RCE → creds in /opt → MySQL row into shell=True → group-writable shutil.py)',
   'TryHackMe-Challenge-Extract': 'TryHackMe — Extract (TryBookMe: nano .swp leak → SSRF blacklist bypass via gopher:// → loopback-only Next.js → CVE-2025-29927 middleware bypass → serialized-cookie 2FA flip)',
   'TryHackMe-Challenge-ContraBando': 'TryHackMe — ContraBando (Apache 2.4.55 request smuggling → gen.php command injection → internal Flask SSRF+SSTI → vault [[ == ]] glob oracle leaks /root/password → python2 input() eval root)',
+  'TryHackMe-Challenge-RabbitHole': 'TryHackMe — Rabbit Hole (fake anti-bruteforce sleep → second-order SQLi via DOUBLE-quoted username → information_schema.processlist steals the admin cron\'s live login query → SSH)',
 }
