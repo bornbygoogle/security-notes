@@ -45,3 +45,40 @@ content/writeups/**/work/
 
 # Personal Claude Code settings overrides (auto-mode classifier rules, etc.)
 /.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# Consolidated security-research workspace (imported from Security2, 2026-10-03)
+# ---------------------------------------------------------------------------
+# Same reasoning as /walkthrough/ above, one level up in scope: mission journals
+# hold RAW OUTPUT and REAL FLAGS, so they are private and out of the public
+# repo. `content/` is worse than a git concern here -- Nextra publishes every
+# .md under it as a live, Pagefind-indexed URL, so a mission journal dropped
+# there would publish a flag and a target's file layout.
+/security-research/
+
+# Reference checkout of the upstream skills repository (818 skills, 46 MB).
+# Kept for provenance and offline review; the INSTALLED copy that the runtime
+# actually loads is ~/.agents/skills (914 skills, a superset). Nested .git, so
+# never a submodule of this one by accident.
+/tools/skills-repo/
+
+# Wordlists, cracking data and the CrackStation mirror.
+#
+# 60 GB. The largest artefact is a 55.7 GB sorted MD5 index with 1.2 B entries,
+# and its presence in a git index is unrecoverable-in-practice: a single `git
+# add .` would start writing tens of gigabytes of objects with no way to abort
+# cleanly. `*.gz` and the index are named explicitly rather than swept by
+# extension, so a future small text file is not ignored by accident.
+/tools/wordlists/
+*.sorted.idx
+*.pkl
+
+# Artefacts from individual missions that are not journals: nmap output, hash
+# dumps, sensor/robot raw logs, ffuf configs, ad-hoc exploit scripts.
+/tools/mission-artifacts/
+
+# Sixteen zero-byte files whose NAMES are shell accidents -- `32m└─m`,
+# `red@red:~$`, `bash:`, `Command:`, `2004h`. They are `ls` output and shell
+# prompts that were redirected into a filename by a mistyped redirect. Quarantined
+# rather than deleted, so the import is lossless and the review can decide.
+/tools/quarantine/

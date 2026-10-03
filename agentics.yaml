@@ -1,0 +1,60 @@
+# <project name> -- authorised security research profile.
+#
+# Facts about the engagement, and nothing else. Which actions are permitted, and
+# who interrupts before one of them, is decided in workflows/pentest.yaml and is
+# not editable from here.
+name: Security
+
+project:
+  root: .
+  # An investigation changes nothing in the repository, so there is no source
+  # index to build. The `true` glob is honest about that rather than pointing at
+  # the code under test as though it were a change set.
+  source_globs:
+    - "security-research/**"
+  exclude:
+    - "**/__pycache__/**"
+
+tests:
+  # There is no suite. A target is not a build, and a command that pretended
+  # otherwise would be recorded as an authoritative test result that never ran.
+  authoritative: "true"
+  parser: none
+
+roles: {}
+
+# Words that make a path in THIS engagement's evidence worth a second look.
+security:
+  - authorization
+  - credential
+  - flag
+  - teardown
+
+# A domain is a directory holding an INDEX.md, and the domains are derived from
+# the filesystem -- so an unpopulated KB has none, the documentation phase skips,
+# and the run ends FAILED on G-DOC-PLACEMENT.
+# The REAL knowledge base, not a fresh empty one.
+#
+# `init --security-research` scaffolds `root: .agentic`, which on its own would be
+# an empty domain: G-DOC-PLACEMENT would find a domain, pass, and every mission
+# would promote lessons into a directory that starts with nothing. That is the
+# shape of a control that is green and empty.
+#
+# The lessons already exist and are indexed:
+#   /mnt/data2/DiskG/MEGA/Code/secondbrain/security-research/
+#     18 files, 109 582 B, INDEX.md present, 5 domains at the root
+#     methodology.md  mistakes.md  anti-patterns.md  credential-attacks.md
+#     oracles-validation.md  recon-osint.md  sql-injection.md
+#     web-exploitation-patterns.md  web-injection-advanced.md  privesc-unix.md
+#     command-channel.md  pwn-binary.md  c2-tradecraft.md  tls-probes.md
+#     tool-quirks.md  threat-intel.md  report-writing.md
+#
+# `root` is the secondbrain ROOT, not the security-research folder: a domain is a
+# SUBDIRECTORY holding an INDEX.md, so pointing root at security-research would
+# make the topic files domains and find none. `general/` is a sibling domain and
+# is worth consulting for a pentest -- it holds the cross-domain CS material.
+knowledge_base:
+  root: /mnt/data2/DiskG/MEGA/Code/secondbrain
+  domains: [security-research]
+
+reports: security-research-reports
