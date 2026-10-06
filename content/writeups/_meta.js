@@ -37,4 +37,7 @@ export default {
   'TryHackMe-Challenge-Extract': 'TryHackMe — Extract (TryBookMe: nano .swp leak → SSRF blacklist bypass via gopher:// → loopback-only Next.js → CVE-2025-29927 middleware bypass → serialized-cookie 2FA flip)',
   'TryHackMe-Challenge-ContraBando': 'TryHackMe — ContraBando (Apache 2.4.55 request smuggling → gen.php command injection → internal Flask SSRF+SSTI → vault [[ == ]] glob oracle leaks /root/password → python2 input() eval root)',
   'TryHackMe-Challenge-RabbitHole': 'TryHackMe — Rabbit Hole (fake anti-bruteforce sleep → second-order SQLi via DOUBLE-quoted username → information_schema.processlist steals the admin cron\'s live login query → SSH)',
+  'TryHackMe-Challenge-M4tr1x': 'TryHackMe — M4tr1x: Exit Denied (MyBB: disabled-form endpoint → published password list → mod PMs → binary-encoded keymaker page cuts a 9-day GPG crack to 79s → exposed MySQL login_keys → Super Mod sees deleted threads → reimplemented SSH-TOTP → SUID pandoc --filter root)',
+  'TryHackMe-Challenge-Archangel': 'TryHackMe — Archangel (dual vhost + PHP LFI whose ../.. guard is a substring test → ..// escape → php://filter source read → filter-chain RCE as www-data)',
+  'TryHackMe-Challenge-CyberHeroes': 'TryHackMe — CyberHeroes (client-side authenticate() decides the login → password stored reversed in the page → flag path built from username+password, static file with no authorization)',
 }
