@@ -40,4 +40,5 @@ export default {
   'TryHackMe-Challenge-M4tr1x': 'TryHackMe — M4tr1x: Exit Denied (MyBB: disabled-form endpoint → published password list → mod PMs → binary-encoded keymaker page cuts a 9-day GPG crack to 79s → exposed MySQL login_keys → Super Mod sees deleted threads → reimplemented SSH-TOTP → SUID pandoc --filter root)',
   'TryHackMe-Challenge-Archangel': 'TryHackMe — Archangel (dual vhost + PHP LFI whose ../.. guard is a substring test → ..// escape → php://filter source read → filter-chain RCE as www-data)',
   'TryHackMe-Challenge-CyberHeroes': 'TryHackMe — CyberHeroes (client-side authenticate() decides the login → password stored reversed in the page → flag path built from username+password, static file with no authorization)',
+  'TryHackMe-Challenge-DigDug': 'TryHackMe — DigDug (DNS: dig @target givemetheflag.com returns the flag as a TXT record for any query type; the @ is the trick)',
 }
